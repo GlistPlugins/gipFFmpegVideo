@@ -15,33 +15,37 @@ list(APPEND PLUGIN_SRCS
 )
 
 list(APPEND PLUGIN_INCLUDES
+			${PREBUILT_DIR}/include
+			${PREBUILT_DIR}/include/libavcodec
+			${PREBUILT_DIR}/include/libavutil
+			${PREBUILT_DIR}/include/libavfilter
+			${PREBUILT_DIR}/include/libavformat
+			${PREBUILT_DIR}/include/libavdevice
+			${PREBUILT_DIR}/include/libswresample
+			${PREBUILT_DIR}/include/libswscale
 			${PLUGIN_DIR}/src
 )
 
-list(APPEND PLUGIN_INCLUDES
-	${PREBUILT_DIR}/include
-	${PREBUILT_DIR}/include/libavcodec
-	${PREBUILT_DIR}/include/libavutil
-	${PREBUILT_DIR}/include/libavfilter
-	${PREBUILT_DIR}/include/libavformat
-	${PREBUILT_DIR}/include/libavdevice
-	${PREBUILT_DIR}/include/libswresample
-	${PREBUILT_DIR}/include/libswscale
+list(APPEND PLUGIN_LINKDIRS
+			${PREBUILT_DIR}/lib/win32
+			${PREBUILT_DIR}/bin
 )
 
-list(APPEND PLUGIN_LIBDIRS ${PREBUILT_DIR}/lib/win32)
+#set(PLUGIN_LIBDIRS ${PREBUILT_DIR}/lib/win32)
+list(APPEND PLUGIN_LIBDIRS
+			${PREBUILT_DIR}/lib/win32
+)
 
-list(APPEND PLUGIN_LINKDIRS ${PREBUILT_DIR}/bin)
-
+					
 if(WIN32)
 	list(APPEND PLUGIN_LINKLIBS
 				avcodec
-				avdevice
-				avfilter
 				avformat
+				avfilter
+				avdevice
 				avutil
-				swresample
-				swscale )
+				swscale
+				)
 elseif(LINUX)
 	list(APPEND PLUGIN_LINKLIBS
 				)

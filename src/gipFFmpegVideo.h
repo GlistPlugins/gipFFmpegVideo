@@ -13,7 +13,7 @@
 
 class gipFFmpegVideo : public gObject {
 public:
-    gipFFmpegVideo();
+	gipFFmpegVideo();
     virtual ~gipFFmpegVideo();
 
     void load(std::string fullPath);

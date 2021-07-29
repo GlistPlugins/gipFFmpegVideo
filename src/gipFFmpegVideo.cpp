@@ -1,5 +1,5 @@
 /*
- * gFFmpegVideo.cpp
+ * gipFFmpegVideo.cpp
  *
  *  Created on: 10 Jul 2021
  *      Author: kayra

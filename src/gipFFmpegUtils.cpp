@@ -1,5 +1,5 @@
 /*
- * gFFmpegUtils.cpp
+ * gipFFmpegUtils.cpp
  *
  *  Created on: 10 Jul 2021
  *      Author: kayra
@@ -85,13 +85,13 @@ bool gipFFmpegUtils::loadFrame(unsigned char **data_out, int64_t* pts) {
             continue;
         }
 
-        logi("1");
+        //logi("1");
 
         if (checkError(avcodec_send_packet(state.video_cdc_ctx, state.video_packet))) {
             return false;
         }
 
-        logi("2");
+        //logi("2");
 
         response = avcodec_receive_frame(state.video_cdc_ctx, state.video_frame);
         if(response == AVERROR(EAGAIN) || response == AVERROR_EOF) {
@@ -101,7 +101,7 @@ bool gipFFmpegUtils::loadFrame(unsigned char **data_out, int64_t* pts) {
             return false;
         }
 
-        logi("2");
+        //logi("2");
 
         av_packet_unref(state.video_packet);
         break;
