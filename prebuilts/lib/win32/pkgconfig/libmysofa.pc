@@ -1,0 +1,11 @@
+Name: libmysofa
+Description: SOFA file reader for better HRTFs
+Version: 1.0
+Requires: 
+includedir=/mingw64/include
+libdir=/mingw64/lib
+Libs: -L${libdir} -lmysofa
+Cflags: -I${includedir}
+
+Libs.private: -lz 
+#Requires.private:

@@ -1,0 +1,12 @@
+prefix=/mingw64
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: libbluray
+Description: library supporting Blu-ray playback
+Version: 1.2.1
+Libs: -L${libdir} -lbluray
+Libs.private:   -lgdi32
+Requires.private:  libxml-2.0 >= 2.6 freetype2
+Cflags: -I${includedir}

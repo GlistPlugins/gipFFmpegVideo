@@ -1,0 +1,11 @@
+prefix=/mingw64
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+ 
+Name: Gavl 
+Description: Gmerlin Audio Video Library
+Version: 1.4.0
+Libs: -L${libdir} -lgavl
+Cflags: -I${includedir} 
+
