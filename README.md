@@ -2,7 +2,9 @@
 A GlistEngine plugin that plays a video and draws it on the screen using FFmpeg library. For instant, the plugin is compatible with Windows and Linux.
 
 ## Installation
-Fork & clone this project into ~/dev/glist/glistplugins
+Fork & clone this project into 
+> C:\dev\glist\glistplugins (on Windows)
+> ~/dev/glist/glistplugins (on Linux)
 
 *Notice For Linux Developers* :
 Please install necessary libraries before running the plugin:
