@@ -4,8 +4,7 @@ A GlistEngine plugin that plays a video and draws it on the screen using FFmpeg 
 ## Installation
 Fork & clone this project into ~/dev/glist/glistplugins
 
-*Notice For Linux Developers*
-
+*Notice For Linux Developers* :
 Please install necessary libraries before running the plugin:
 > sudo apt-get install libavcodec58 libavcodec-dev libavformat58 libavformat-dev libavfilter7 libavfilter-dev libavdevice58 libavdevice-dev libavutil56 libavutil-dev libswscale5 libswscale-dev
 
