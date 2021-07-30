@@ -1,8 +1,12 @@
 # gipFFmpegVideo
-A GlistEngine plugin that plays a video and draws it on the screen using FFmpeg library.
+A GlistEngine plugin that plays a video and draws it on the screen using FFmpeg library. For instant, the plugin is compatible with Windows and Linux.
 
 ## Installation
 Fork & clone this project into ~/dev/glist/glistplugins
+
+### Note For Linux Developers
+Please install necessary libraries before running the plugin:
+> sudo apt-get install libavcodec58 libavcodec-dev libavformat58 libavformat-dev libavfilter7 libavfilter-dev libavdevice58 libavdevice-dev libavutil56 libavutil-dev libswscale5 libswscale-dev
 
 ## Usage
 1. Add gipFFmpegVideo into plugins of your GlistApp/CMakeLists.txt
