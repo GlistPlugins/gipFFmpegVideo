@@ -23,7 +23,7 @@ gipFFmpegVideo::gipFFmpegVideo() {
 }
 
 gipFFmpegVideo::~gipFFmpegVideo() {
-	delete framedata;
+
 }
 
 void gipFFmpegVideo::load(std::string fullPath) {
@@ -47,7 +47,8 @@ void gipFFmpegVideo::update() {
 		close();
 		return;
 	}
-	utils.loadFrame(&framedata, &pts);
+	utils.loadVideoFrame(&framedata, &pts);
+	utils.loadAudioFrame();
 	framebuffer.loadData(framedata, width, height, 4);
 	currentframe++;
 
