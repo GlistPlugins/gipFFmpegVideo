@@ -25,25 +25,44 @@ bool gipFFmpegUtils::openVideo(const char *filename, int* width, int* height, in
     if(checkError(avformat_open_input(&state.formatcontext, filename, NULL, NULL))) return false;
 
 	// Try to find the video stream
-	AVCodecParameters *codecparams;
-	AVCodec *v_codec = NULL, *a_codec = NULL;
+	AVCodecParameters *v_codecparams;
+	AVCodec *v_codec = NULL;
 
 	for (int i = 0; i < state.formatcontext->nb_streams; i++) {
 		auto stream = state.formatcontext->streams[i];
 
-		codecparams = stream->codecpar;
-		v_codec = avcodec_find_decoder(codecparams->codec_id);
+		v_codecparams = stream->codecpar;
+		v_codec = avcodec_find_decoder(v_codecparams->codec_id);
 
 		if (!v_codec ) {
 			continue;
 		}
-		if (codecparams->codec_type == AVMEDIA_TYPE_VIDEO) {
+		if (v_codecparams->codec_type == AVMEDIA_TYPE_VIDEO) {
 			streamslist[STREAM_VIDEO] = i;
-			state.width = codecparams->width;
-			state.height = codecparams->height;
+			state.width = v_codecparams->width;
+			state.height = v_codecparams->height;
 			*frame_count = stream->nb_frames;
 			*duration = stream->duration;
 			*time_base = stream->time_base;
+			break;
+		}
+	}
+
+	// Find audio stream
+	AVCodecParameters *a_codecparams;
+	AVCodec *a_codec = nullptr;
+
+	for (int i = 0; i < state.formatcontext->nb_streams; i++) {
+		auto stream = state.formatcontext->streams[i];
+
+		a_codecparams = stream->codecpar;
+		a_codec = avcodec_find_decoder(a_codecparams->codec_id);
+
+		if (!a_codec ) {
+			continue;
+		}
+		if (a_codecparams->codec_type == AVMEDIA_TYPE_AUDIO) {
+			streamslist[STREAM_AUDIO] = i;
 			break;
 		}
 	}
@@ -52,22 +71,78 @@ bool gipFFmpegUtils::openVideo(const char *filename, int* width, int* height, in
 		loge("Valid video stream could not be created from the file");
 		return false;
 	}
+	if (streamslist[STREAM_AUDIO] == -1) {
+		loge("Valid audio stream could not be created from the file");
+		return false;
+	}
 
+	// Initialize codec context for the video
     state.video_cdc_ctx = avcodec_alloc_context3(v_codec);
-    if (checkNull(state.video_cdc_ctx, "Could not create AVCodecContext"))
+    if (checkNull(state.video_cdc_ctx, "Could not create AVCodecContext for the video."))
     	return false;
 
-    if (checkError(avcodec_parameters_to_context(state.video_cdc_ctx, codecparams)))
+    // Initialize codec context for the audio
+    state.audio_cdc_ctx = avcodec_alloc_context3(a_codec);
+    if (checkNull(state.audio_cdc_ctx, "Could not create AVCodecContext for the audio."))
+        return false;
+
+    // Turn video codec parameters to codec context
+    if (checkError(avcodec_parameters_to_context(state.video_cdc_ctx, v_codecparams)))
+    	return false;
+    // Turn audio codec parameters to codec context
+    if (checkError(avcodec_parameters_to_context(state.audio_cdc_ctx, a_codecparams)))
     	return false;
 
+    // Initialize the video codec context to use the codec for the video
     if(checkError(avcodec_open2(state.video_cdc_ctx, v_codec, nullptr)))
+    	return false;
+    // Initialize the audio codec context to use the codec for the audio
+    if(checkError(avcodec_open2(state.audio_cdc_ctx, a_codec, nullptr)))
     	return false;
 
     state.video_frame = av_frame_alloc();
     state.video_packet = av_packet_alloc();
 
-    if (checkNull(state.video_frame, "Could not allocate the video frame.") ||
-        checkNull(state.video_packet, "Could not allocate the packet.")) return false;
+    state.audio_frame = av_frame_alloc();
+    state.audio_packet = av_packet_alloc();
+
+    if (checkNull(state.video_frame, "Could not allocate the video frame!") ||
+        checkNull(state.video_packet, "Could not allocate the video packet!") ||
+		checkNull(state.audio_frame, "Could not allocate the audio frame!") ||
+		checkNull(state.audio_packet, "Could not allocate the audio packet!")
+		)
+    	return false;
+
+    // libao Initialization
+	ao_initialize();
+
+	driver = ao_default_driver_id();
+	av_sampleformat = state.audio_cdc_ctx->sample_fmt;
+	gLogi("sample format") << "bits:" << static_cast<int>(av_sampleformat);
+    if(av_sampleformat == AV_SAMPLE_FMT_U8){
+        printf("U8\n");
+
+        sampleformat.bits = 8;
+    }else if(av_sampleformat == AV_SAMPLE_FMT_S16){
+        printf("S16\n");
+        sampleformat.bits = 16;
+    }else if(av_sampleformat == AV_SAMPLE_FMT_S32){
+        printf("S32\n");
+        sampleformat.bits = 32;
+    }else if(av_sampleformat == AV_SAMPLE_FMT_FLTP) {
+    	sampleformat.bits = 32;
+    }
+
+    sampleformat.channels = state.audio_cdc_ctx->channels;
+    sampleformat.rate = state.audio_cdc_ctx->sample_rate;
+    sampleformat.byte_format = AO_FMT_NATIVE;
+    sampleformat.matrix = 0;
+    device = ao_open_live(driver, &sampleformat, nullptr);
+    buffer_size = AVCODEC_MAX_AUDIO_FRAME_SIZE + AV_INPUT_BUFFER_PADDING_SIZE;
+    buffer = new uint8_t[buffer_size];
+    state.audio_packet->data = buffer;
+    state.audio_packet->size = buffer_size;
+
 
     *width = state.width;
     *height = state.height;
@@ -75,7 +150,7 @@ bool gipFFmpegUtils::openVideo(const char *filename, int* width, int* height, in
     return true;
 }
 
-bool gipFFmpegUtils::loadFrame(unsigned char **data_out, int64_t* pts) {
+bool gipFFmpegUtils::loadVideoFrame(unsigned char **data_out, int64_t* pts) {
 
     // Wait until we got a video packet ignoring audio, etc.
     int response;
@@ -129,6 +204,53 @@ bool gipFFmpegUtils::loadFrame(unsigned char **data_out, int64_t* pts) {
 
 
     return true;
+}
+
+
+bool gipFFmpegUtils::loadAudioFrame() {
+
+    int frameFinished;
+
+	while(av_read_frame(state.formatcontext, state.audio_packet) >= 0) {
+        if(state.audio_packet->stream_index == streamslist[STREAM_AUDIO]){
+        	av_packet_unref(state.video_packet);
+            continue;
+        }
+        logi("1");
+
+        if (checkError(avcodec_send_packet(state.audio_cdc_ctx, state.audio_packet))) {
+        	return false;
+        }
+
+        logi("2");
+
+        frameFinished = avcodec_receive_frame(state.audio_cdc_ctx, state.audio_frame);
+
+        logi("3");
+
+        if(frameFinished == AVERROR(EAGAIN) || frameFinished == AVERROR_EOF) {
+        	av_packet_unref(state.audio_packet);
+        	logi("some error, but still continue");
+        	continue;
+        } else if (checkError(frameFinished)) {
+        	logi("error");
+        	return false;
+        }
+
+        logi("4");
+
+        if(frameFinished){
+        	gLogi("Frame finished") << "playing";
+        	ao_play(device, (char*)state.audio_frame->extended_data[0], state.audio_frame->linesize[0] );
+        }else{
+        	//printf("Not Finished\n");
+        }
+
+        logi("5");
+
+	}
+
+	return true;
 }
 
 void gipFFmpegUtils::close() {

@@ -13,8 +13,10 @@ extern "C" {
 #include <libavutil/error.h>
 #include <libswscale/swscale.h>
 #include <inttypes.h>
+#include <ao/ao.h>
 }
 
+#define AVCODEC_MAX_AUDIO_FRAME_SIZE 192000
 
 class gipFFmpegUtils : public gObject {
 public:
@@ -23,7 +25,8 @@ public:
 
 
     bool openVideo(const char *filename, int *width, int *height, int64_t* frame_count, int64_t* duration, AVRational* time_base);
-    bool loadFrame(unsigned char **data_out, int64_t* pts);
+    bool loadVideoFrame(unsigned char **data_out, int64_t* pts);
+    bool loadAudioFrame();
     bool seekFrame();
 
 	struct VideoReaderState {
@@ -34,7 +37,7 @@ public:
 		AVCodecContext *video_cdc_ctx, *audio_cdc_ctx;
 		AVFrame *video_frame, *audio_frame;
 		AVPacket *video_packet, *audio_packet;
-		SwsContext *sws_ctx;
+		SwsContext *sws_ctx; // for video scaling and pixel correcting only
 	};
 
     void close();
@@ -43,6 +46,14 @@ private:
     static const int STREAM_VIDEO = 0, STREAM_AUDIO = 1, STREAM_SUBTITLE = 2;
 
     VideoReaderState state;
+
+    // libao
+    int driver;
+    ao_sample_format sampleformat;
+    AVSampleFormat av_sampleformat;
+    ao_device *device;
+    int buffer_size;
+    uint8_t *buffer;
 
     int streamslist[3]; // video, audio, subtitle
 
