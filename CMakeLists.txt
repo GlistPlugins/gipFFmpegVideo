@@ -45,6 +45,7 @@ if(WIN32)
 				avdevice
 				avutil
 				swscale
+				ao
 				)
 elseif(LINUX)
 	list(APPEND PLUGIN_LINKLIBS

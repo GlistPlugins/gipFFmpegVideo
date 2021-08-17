@@ -10,6 +10,16 @@ Fork & clone this project into
 Please install necessary libraries before running the plugin:
 > sudo apt-get install libavcodec58 libavcodec-dev libavformat58 libavformat-dev libavfilter7 libavfilter-dev libavdevice58 libavdevice-dev libavutil56 libavutil-dev libswscale5 libswscale-dev
 
+#####*Notice for all*
+
+Please add the PATH variable to eclipse paths by going to:
+
+> Project > Properties > C/C++ Build Environment
+
+then click PATH followed by clicking Edit on the right. There, at the end of the paths, add:
+
+> ${workspace_loc}\\..\\..\\..\\..\glistplugins\gipFFmpegSound\prebuilts\bin
+
 ## Usage
 1. Add gipFFmpegVideo into plugins of your GlistApp/CMakeLists.txt
 > set(PLUGINS gipFFmpegVideo)
