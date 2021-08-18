@@ -12,7 +12,11 @@ Please install necessary libraries before running the plugin:
 
 ##### *Notice for all*
 
-Please add the PATH variable to eclipse paths by going to:
+Please add the PATH variable to eclipse paths by:
+
+Click the GlistApp project once on the left, inside the Project Explorer.
+
+Then click on the top of the eclipse window:
 
 > Project > Properties > C/C++ Build > Environment
 
