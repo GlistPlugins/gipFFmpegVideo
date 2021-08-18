@@ -14,7 +14,7 @@ Please install necessary libraries before running the plugin:
 
 Please add the PATH variable to eclipse paths by going to:
 
-> Project > Properties > C/C++ Build Environment
+> Project > Properties > C/C++ Build > Environment
 
 then click PATH followed by clicking Edit on the right. There, at the end of the paths, add:
 
