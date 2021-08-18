@@ -10,7 +10,7 @@ Fork & clone this project into
 Please install necessary libraries before running the plugin:
 > sudo apt-get install libavcodec58 libavcodec-dev libavformat58 libavformat-dev libavfilter7 libavfilter-dev libavdevice58 libavdevice-dev libavutil56 libavutil-dev libswscale5 libswscale-dev
 
-#####*Notice for all*
+##### *Notice for all*
 
 Please add the PATH variable to eclipse paths by going to:
 
