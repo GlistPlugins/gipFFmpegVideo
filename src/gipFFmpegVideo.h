@@ -65,7 +65,6 @@ private:
     //Audio
     float volume;
 
-
     std::string filepath;
 
     gipFFmpegUtils utils;

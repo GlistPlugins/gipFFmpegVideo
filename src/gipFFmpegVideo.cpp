@@ -47,20 +47,31 @@ void gipFFmpegVideo::update() {
 		close();
 		return;
 	}
-	utils.loadVideoFrame(&framedata, &pts);
-	utils.loadAudioFrame();
+
+	int result;
+	int size_1, size_2;
+	float *buffer_1, *buffer_2;
+	while(true) {
+		result = utils.read_frame();
+
+		if(result == gipFFmpegUtils::RECEIVED_VIDEO) {
+			break;
+		}
+		else if (result == gipFFmpegUtils::RECEIVED_NONE) {
+			gLoge("Video:") << "Could not load the video frame";
+			return;
+		}
+
+		//	Audio received, (result = number of samples)
+		utils.getAudio()->getRingBuffer()->writeWait(result * utils.getState()->num_channels, &size_1, &buffer_1, &size_2, &buffer_2);
+		utils.fetch_audio_frame(size_1, buffer_1, size_2, buffer_2);
+		utils.getAudio()->getRingBuffer()->writeAdvance(result * utils.getState()->num_channels);
+	}
+
+	utils.fetch_video_frame(&framedata, &pts);
 	framebuffer.loadData(framedata, width, height, 4);
 	currentframe++;
 
-	if(firstframe) {
-		glfwSetTime(0.0f);
-		firstframe = false;
-	}
-
-	ptsec = pts * double(time_base.num) / double(time_base.den / speed) ;
-	while(ptsec > glfwGetTime()) {
-		glfwWaitEventsTimeout(ptsec - glfwGetTime());
-	}
 }
 
 void gipFFmpegVideo::draw() {
