@@ -12,6 +12,8 @@ set(PREBUILT_DIR ${PLUGIN_DIR}/prebuilts)
 list(APPEND PLUGIN_SRCS
 			${PLUGIN_DIR}/src/gipFFmpegVideo.cpp
 			${PLUGIN_DIR}/src/gipFFmpegUtils.cpp
+			${PLUGIN_DIR}/src/gipAVSound.cpp
+			${PLUGIN_DIR}/src/gRingBuffer.cpp
 )
 
 list(APPEND PLUGIN_INCLUDES
@@ -45,7 +47,7 @@ if(WIN32)
 				avdevice
 				avutil
 				swscale
-				ao
+				portaudio
 				)
 elseif(LINUX)
 	list(APPEND PLUGIN_LINKLIBS
