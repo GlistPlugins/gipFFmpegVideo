@@ -5,6 +5,9 @@
  *      Author: kayra
  */
 
+#ifndef GIP_FFMPEG_UTILS_H
+#define GIP_FFMPEG_UTILS_H
+
 #include "gTexture.h"
 #include "gObject.h"
 #include "gImage.h"
@@ -69,3 +72,5 @@ private:
 
     gipFFmpegUtils utils;
 };
+
+#endif /* GIP_FFMPEG_UTILS_H */
