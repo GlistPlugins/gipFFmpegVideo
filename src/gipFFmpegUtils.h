@@ -5,6 +5,9 @@
  *      Author: kayra
  */
 
+#ifndef GIP_FFMPEG_UTILS_H
+#define GIP_FFMPEG_UTILS_H
+
 #include "gObject.h"
 
 extern "C" {
@@ -77,3 +80,5 @@ private:
 
     static AVPixelFormat correct_for_deprecated_pixel_format(AVPixelFormat pix_fmt);
 };
+
+#endif /* GIP_FFMPEG_UTILS_H */
