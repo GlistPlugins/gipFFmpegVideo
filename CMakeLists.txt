@@ -28,6 +28,7 @@ list(APPEND PLUGIN_INCLUDES
 			${PREBUILT_DIR}/include/libswscale
 )
 
+if(WIN32)
 list(APPEND PLUGIN_LINKDIRS
 			${PREBUILT_DIR}/lib/win32
 			${PREBUILT_DIR}/bin
@@ -37,6 +38,7 @@ list(APPEND PLUGIN_LINKDIRS
 list(APPEND PLUGIN_LIBDIRS
 			${PREBUILT_DIR}/lib/win32
 )
+endif(WIN32)
 
 					
 if(WIN32)
@@ -51,6 +53,13 @@ if(WIN32)
 				)
 elseif(LINUX)
 	list(APPEND PLUGIN_LINKLIBS
+				avcodec
+				avformat
+				avfilter
+				avdevice
+				avutil
+				swscale
+				portaudio
 				)
 elseif(APPLE)
 	list(APPEND PLUGIN_LINKLIBS

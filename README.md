@@ -8,7 +8,7 @@ Fork & clone this project into
 
 *Notice For Linux Developers* :
 Please install necessary libraries before running the plugin:
-> sudo apt-get install libavcodec58 libavcodec-dev libavformat58 libavformat-dev libavfilter7 libavfilter-dev libavdevice58 libavdevice-dev libavutil56 libavutil-dev libswscale5 libswscale-dev
+> sudo apt-get install libavcodec58 libavcodec-dev libavformat58 libavformat-dev libavfilter7 libavfilter-dev libavdevice58 libavdevice-dev libavutil56 libavutil-dev libswscale5 libswscale-dev libao-dev
 
 ##### *Notice for all*
 

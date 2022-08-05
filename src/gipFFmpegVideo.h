@@ -5,16 +5,17 @@
  *      Author: kayra
  */
 
-#ifndef GIP_FFMPEG_UTILS_H
-#define GIP_FFMPEG_UTILS_H
+#ifndef GIP_FFMPEGVIDEO_H
+#define GIP_FFMPEGVIDEO_H
 
 #include "gTexture.h"
-#include "gObject.h"
+#include "gBasePlugin.h"
 #include "gImage.h"
 #include "gipFFmpegUtils.h"
 #include <GLFW/glfw3.h>
+#include <libavutil/rational.h>
 
-class gipFFmpegVideo : public gObject {
+class gipFFmpegVideo : public gBasePlugin {
 public:
 	gipFFmpegVideo();
     virtual ~gipFFmpegVideo();
@@ -73,4 +74,4 @@ private:
     gipFFmpegUtils utils;
 };
 
-#endif /* GIP_FFMPEG_UTILS_H */
+#endif /* GIP_FFMPEGVIDEO_H */

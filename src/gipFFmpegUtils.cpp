@@ -55,8 +55,8 @@ bool gipFFmpegUtils::openVideo(const char *filename, int* width, int* height, in
 	//	Find the needed streams
 	AVCodecParameters *video_codec_params;
 	AVCodecParameters *audio_codec_params;
-	AVCodec *video_codec;
-	AVCodec *audio_codec;
+	const AVCodec *video_codec;
+	const AVCodec *audio_codec;
 
 	for (int i = 0; i < state.formatcontext->nb_streams; i++) {
 		auto stream = state.formatcontext->streams[i];

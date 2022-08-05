@@ -26,7 +26,6 @@ class gipFFmpegUtils : public gObject {
 public:
     static const int RECEIVED_NONE = 0, RECEIVED_VIDEO = -1;
 
-public:
     struct VideoReaderState {
     	int width;
     	int height;
@@ -47,7 +46,6 @@ public:
     	SwsContext *sws_ctx; // for video scaling and pixel correcting only
     };
 
-public:
     gipFFmpegUtils();
     ~gipFFmpegUtils();
 
