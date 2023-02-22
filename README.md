@@ -22,7 +22,7 @@ Then:
 
 then click PATH followed by clicking Edit on the right. There, at the end of the paths, add:
 
-> ${workspace_loc}\\..\\..\\..\\..\glistplugins\gipFFmpegSound\prebuilts\bin
+> ${workspace_loc}\\..\\..\\..\\..\glistplugins\gipFFmpegVideo\prebuilts\bin
 
 ## Usage
 1. Add gipFFmpegVideo into plugins of your GlistApp/CMakeLists.txt
