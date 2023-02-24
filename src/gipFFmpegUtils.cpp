@@ -7,7 +7,6 @@
 
 #include "gipFFmpegUtils.h"
 #include <cmath>
-#include <typeindex>
 gipFFmpegUtils::gipFFmpegUtils() {
 	streamslist[STREAM_VIDEO] = -1;
 	streamslist[STREAM_AUDIO] = -1;

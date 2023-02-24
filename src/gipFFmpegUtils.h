@@ -16,7 +16,6 @@ extern "C" {
 #include <libavutil/error.h>
 #include <libswscale/swscale.h>
 #include <inttypes.h>
-#include <vector>
 }
 #include "gipAVSound.h"
 
