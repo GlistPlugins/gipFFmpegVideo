@@ -68,14 +68,13 @@ void gipFFmpegVideo::update() {
 		}
 
 		//	Audio received, (result = number of samples)
-		//utils.getAudio()->getRingBuffer()->writeWait(result * utils.getState()->num_channels, &size_1, &buffer_1, &size_2, &buffer_2);
-		//utils.fetch_audio_frame(size_1, buffer_1, size_2, buffer_2);
-		//utils.getAudio()->getRingBuffer()->writeAdvance(result * utils.getState()->num_channels);
+		utils.getAudio()->getRingBuffer()->writeWait(result * utils.getState()->num_channels, &size_1, &buffer_1, &size_2, &buffer_2);
+		utils.fetch_audio_frame(size_1, buffer_1, size_2, buffer_2);
+		utils.getAudio()->getRingBuffer()->writeAdvance(result * utils.getState()->num_channels);
 	}
 
 	utils.fetch_video_frame(&framedata, &pts);
-	framebuffer->loadData(framedata, width, height, 4);
-	//delete framedata;
+	framebuffer->setData(framedata, true);
 	currentframe++;
 }
 
