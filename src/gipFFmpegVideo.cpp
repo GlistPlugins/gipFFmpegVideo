@@ -34,6 +34,7 @@ void gipFFmpegVideo::load(std::string fullPath) {
 		gLoge("Could not open video file at: " + fullPath);
 	}
 
+    framebuffer = new gTexture(width, height, GL_RGBA);
 	firstframe = true;
 }
 
@@ -42,6 +43,10 @@ void gipFFmpegVideo::loadVideo(std::string videoPath) {
 }
 
 void gipFFmpegVideo::update() {
+	if(firstframe) {
+		firstframe = false;
+		return;
+	}
 	if(closed || isPaused || !couldopen) return;
 	if(currentframe >= framecount) {
 		close();
@@ -63,15 +68,15 @@ void gipFFmpegVideo::update() {
 		}
 
 		//	Audio received, (result = number of samples)
-		utils.getAudio()->getRingBuffer()->writeWait(result * utils.getState()->num_channels, &size_1, &buffer_1, &size_2, &buffer_2);
-		utils.fetch_audio_frame(size_1, buffer_1, size_2, buffer_2);
-		utils.getAudio()->getRingBuffer()->writeAdvance(result * utils.getState()->num_channels);
+		//utils.getAudio()->getRingBuffer()->writeWait(result * utils.getState()->num_channels, &size_1, &buffer_1, &size_2, &buffer_2);
+		//utils.fetch_audio_frame(size_1, buffer_1, size_2, buffer_2);
+		//utils.getAudio()->getRingBuffer()->writeAdvance(result * utils.getState()->num_channels);
 	}
 
 	utils.fetch_video_frame(&framedata, &pts);
-	framebuffer.loadData(framedata, width, height, 4);
+	framebuffer->loadData(framedata, width, height, 4);
+	//delete framedata;
 	currentframe++;
-
 }
 
 void gipFFmpegVideo::draw() {
@@ -84,13 +89,12 @@ void gipFFmpegVideo::draw(int x, int y) {
 
 void gipFFmpegVideo::draw(int x, int y, int w, int h) {
 	if(closed || isPaused || !couldopen) return;
-	framebuffer.draw(x, y, w, h);
+	framebuffer->draw(x, y, w, h);
+
 }
 
 void gipFFmpegVideo::play() {
 	if(!couldopen) return;
-
-    framebuffer = gTexture(width, height, GL_RGBA, false);
 
     isplaying = true;
 }

@@ -7,7 +7,7 @@
 
 #include "gipFFmpegUtils.h"
 #include <cmath>
-
+#include <typeindex>
 gipFFmpegUtils::gipFFmpegUtils() {
 	streamslist[STREAM_VIDEO] = -1;
 	streamslist[STREAM_AUDIO] = -1;
@@ -15,7 +15,7 @@ gipFFmpegUtils::gipFFmpegUtils() {
 }
 
 gipFFmpegUtils::~gipFFmpegUtils() {
-
+	delete data;
 }
 
 void gipFFmpegUtils::audio_callback(int num_channels, int buffer_size, float* buffer, void* user_ptr) {
@@ -51,19 +51,24 @@ bool gipFFmpegUtils::openVideo(const char *filename, int* width, int* height, in
     if (checkNull(state.formatcontext, "Couldn't create create format context")) return false;
 
     if(isError(avformat_open_input(&state.formatcontext, filename, NULL, NULL))) return false;
-
 	//	Find the needed streams
 	AVCodecParameters *video_codec_params;
 	AVCodecParameters *audio_codec_params;
 	const AVCodec *video_codec;
 	const AVCodec *audio_codec;
-
+//	const char *mediatypesstr = state.formatcontext->iformat->name;
+//	std::vector<char*> mediatypes = splitString(mediatypesstr, ',');
+//	for(int i = 0; i < mediatypes.size(); i++) {
+//		gLogi("asd") << mediatypes.at(i);
+//		if(!isError(avformat_open_input(&state.formatcontext, filename, av_find_input_format("mp3"), NULL))) {
+//			break;
+//		}
+//	}
 	for (int i = 0; i < state.formatcontext->nb_streams; i++) {
 		auto stream = state.formatcontext->streams[i];
 
 		auto codec_params = stream->codecpar;
 		auto codec = avcodec_find_decoder(codec_params->codec_id);
-
 		if (!codec) { // TODO: Add a thing so we don't play something that we don't support the codec of.
 			continue;
 		}
@@ -135,7 +140,6 @@ bool gipFFmpegUtils::openVideo(const char *filename, int* width, int* height, in
 
     state.video_frame = av_frame_alloc();
     state.av_packet = av_packet_alloc();
-
     state.audio_frame = av_frame_alloc();
 
     if (checkNull(state.video_frame, "Could not allocate the video frame!") ||
@@ -148,35 +152,56 @@ bool gipFFmpegUtils::openVideo(const char *filename, int* width, int* height, in
     *width = state.width;
     *height = state.height;
 
+
+    data = new uint8_t[state.width * state.height * 4];
+    dest[0] = data;
+    dest[1] = NULL;
+    dest[2] = NULL;
+    dest[3] = NULL;
+    dest_linesize[0] = state.width * 4;
+    dest_linesize[1] = 0;
+    dest_linesize[2] = 0;
+    dest_linesize[3] = 0;
+
+
     return true;
 }
 
 int gipFFmpegUtils::read_frame() {
+    state.video_frame = av_frame_alloc();
+    state.av_packet = av_packet_alloc();
+    state.audio_frame = av_frame_alloc();
 
     // Wait until we got a video packet ignoring audio, etc.
     int response;
-    while (av_read_frame(state.formatcontext, state.av_packet) >= 0) { // Until the EOF
+    //while (av_read_frame(state.formatcontext, state.av_packet) < 0) { // Until the EOF
+    bool ispacketcorrect = av_read_frame(state.formatcontext, state.av_packet) >= 0;
+    do {
         if (state.av_packet->stream_index == streamslist[STREAM_VIDEO]) {
 
         	//	Send packet to decoder (codec)
 			if (isError(avcodec_send_packet(state.video_cdc_ctx, state.av_packet))) {
+				av_packet_free(&state.av_packet);
 				return RECEIVED_NONE;
 			}
 
 			//	Receive the decoded frame from the codec
 			response = avcodec_receive_frame(state.video_cdc_ctx, state.video_frame);
 			if(response == AVERROR(EAGAIN) || response == AVERROR_EOF) {
-				av_packet_unref(state.av_packet);
+				av_frame_free(&state.video_frame);
+				av_packet_free(&state.av_packet);
 				continue;
 			}
 			else if (isError(response)) { // if other error
+				av_frame_free(&state.video_frame);
+				av_packet_free(&state.av_packet);
 				return RECEIVED_NONE;
 			}
 
 			state.pixel_format = correct_for_deprecated_pixel_format((AVPixelFormat)state.video_frame->format);
 
 			//	Wipe data back to default values
-			av_packet_unref(state.av_packet);
+			av_packet_free(&state.av_packet);
 			return RECEIVED_VIDEO;
         }
         else if (state.av_packet->stream_index == streamslist[STREAM_AUDIO]) {
@@ -188,7 +213,7 @@ int gipFFmpegUtils::read_frame() {
 			//	Receive the decoded frame from the codec
 			response = avcodec_receive_frame(state.audio_cdc_ctx, state.audio_frame);
 			if(response == AVERROR(EAGAIN) || response == AVERROR_EOF) {
-				av_packet_unref(state.av_packet);
+				av_packet_free(&state.av_packet);
 				continue;
 			}
 			else if (isError(response)) { // if other error
@@ -198,17 +223,25 @@ int gipFFmpegUtils::read_frame() {
 			state.sample_format = (AVSampleFormat)state.audio_frame->format;
 
 			//	Wipe data back to default values
-			av_packet_unref(state.av_packet);
+			av_packet_free(&state.av_packet);
 			return state.audio_frame->nb_samples;
         }
         else {
         	//	Packet is from some other stream, igrone
 
-        	av_packet_unref(state.av_packet);
+        	av_packet_free(&state.av_packet);
         	continue;
         }
-    }
+    //}
+        ispacketcorrect = av_read_frame(state.formatcontext, state.av_packet) >= 0;
+    } while(!ispacketcorrect);
 
+    //av_packet_unref(state.av_packet);
+    av_frame_unref(state.video_frame);
+    av_frame_unref(state.audio_frame);
+    av_frame_free(&state.video_frame);
+    av_frame_free(&state.audio_frame);
+    av_packet_free(&state.av_packet);
     return RECEIVED_NONE;
 }
 
@@ -224,13 +257,12 @@ void gipFFmpegUtils::fetch_video_frame(uint8_t **data_out, int64_t* pts) {
 	if (checkNull(state.sws_ctx, "Couldn't initialize SwsContext"))
 		return;
 
-    uint8_t *data = new uint8_t[state.width * state.height * 4];
-
-    uint8_t* dest[4] = {data, NULL, NULL, NULL};
-    int dest_linesize[4] = {state.width * 4, 0, 0, 0};
-
     sws_scale(state.sws_ctx, state.video_frame->data, state.video_frame->linesize, 0, state.video_frame->height, dest, dest_linesize);
     sws_freeContext(state.sws_ctx);
+
+    av_frame_free(&state.video_frame);
+    av_frame_free(&state.audio_frame);
+    av_packet_free(&state.av_packet);
 
     *data_out = data;
 }
@@ -275,7 +307,7 @@ void gipFFmpegUtils::close() {
     avformat_close_input(&state.formatcontext);
     avformat_free_context(state.formatcontext);
     av_frame_free(&state.video_frame);
-    av_frame_free(&state.video_frame);
+    av_frame_free(&state.audio_frame);
     av_packet_free(&state.av_packet);
     avcodec_free_context(&state.video_cdc_ctx);
     avcodec_free_context(&state.audio_cdc_ctx);
@@ -321,4 +353,18 @@ gipAVSound* gipFFmpegUtils::getAudio() {
 
 gipFFmpegUtils::VideoReaderState* gipFFmpegUtils::getState() {
 	return &state;
+}
+
+std::vector<char*> gipFFmpegUtils::splitString(const char* str, const char delimiter) {
+    std::vector<char*> tokens;
+    char* token;
+    char* str_copy = strdup(str);
+
+    token = strtok(str_copy, &delimiter);
+    while (token != NULL) {
+        tokens.push_back(token);
+        token = strtok(NULL, &delimiter);
+    }
+
+    return tokens;
 }

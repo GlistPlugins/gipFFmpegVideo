@@ -46,7 +46,7 @@ public:
     bool isPlaying();
 
 private:
-    gTexture framebuffer;
+    gTexture* framebuffer;
     uint8_t* framedata;
     int64_t framecount;
     int currentframe;
