@@ -34,6 +34,7 @@ void gipFFmpegVideo::load(std::string fullPath) {
 		gLoge("Could not open video file at: " + fullPath);
 	}
 
+    framebuffer = new gTexture(width, height, GL_RGBA);
 	firstframe = true;
 }
 
@@ -42,6 +43,10 @@ void gipFFmpegVideo::loadVideo(std::string videoPath) {
 }
 
 void gipFFmpegVideo::update() {
+	if(firstframe) {
+		firstframe = false;
+		return;
+	}
 	if(closed || isPaused || !couldopen) return;
 	if(currentframe >= framecount) {
 		close();
@@ -69,9 +74,8 @@ void gipFFmpegVideo::update() {
 	}
 
 	utils.fetch_video_frame(&framedata, &pts);
-	framebuffer.loadData(framedata, width, height, 4);
+	framebuffer->setData(framedata, true);
 	currentframe++;
-
 }
 
 void gipFFmpegVideo::draw() {
@@ -84,13 +88,12 @@ void gipFFmpegVideo::draw(int x, int y) {
 
 void gipFFmpegVideo::draw(int x, int y, int w, int h) {
 	if(closed || isPaused || !couldopen) return;
-	framebuffer.draw(x, y, w, h);
+	framebuffer->draw(x, y, w, h);
+
 }
 
 void gipFFmpegVideo::play() {
 	if(!couldopen) return;
-
-    framebuffer = gTexture(width, height, GL_RGBA, false);
 
     isplaying = true;
 }

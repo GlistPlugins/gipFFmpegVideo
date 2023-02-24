@@ -76,6 +76,10 @@ private:
     static void audio_callback(int num_channels, int buffer_size, float* buffer, void* user_ptr);
 
     static AVPixelFormat correct_for_deprecated_pixel_format(AVPixelFormat pix_fmt);
+    std::vector<char*> splitString(const char* str, const char delimiter);
+    uint8_t *data;
+    uint8_t* dest[4];
+    int dest_linesize[4];
 };
 
 #endif /* GIP_FFMPEG_UTILS_H */

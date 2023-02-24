@@ -39,12 +39,7 @@ then click PATH followed by clicking Edit on the right. There, at the end of the
 >     video.loadVideo("videofilename");
 > }
 
-5. Update
-> void GameCanvas::update() {
->     video.update();
-> }
-
-6. Draw
+5. Draw
 > void GameCanvas::draw() {
 >     video.draw(x, y);
 > }
