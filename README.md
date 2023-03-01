@@ -34,8 +34,9 @@ then click PATH followed by clicking Edit on the right. There, at the end of the
 3. Define gipFFmpegVideo object
 > gipFFmpegVideo video;
 
-4. Load video
+4. Load video and set your app fps (default is 60 if you haven't changed it) in setup
 > void GameCanvas::setup() {
+>     video.setAppFps(60);
 >     video.loadVideo("videofilename");
 > }
 
@@ -43,6 +44,5 @@ then click PATH followed by clicking Edit on the right. There, at the end of the
 > void GameCanvas::draw() {
 >     video.draw(x, y);
 > }
-
 ## Plugin Licence
 Apache 2

@@ -3,6 +3,7 @@
  *
  *  Created on: 10 Jul 2021
  *      Author: kayra
+ *      Edited By: Umutcan Türkmen 24 Feb 2023
  */
 
 #ifndef GIP_FFMPEG_UTILS_H

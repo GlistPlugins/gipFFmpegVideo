@@ -3,6 +3,7 @@
  *
  *  Created on: 10 Jul 2021
  *      Author: kayra
+ *      Edited By: Umutcan Türkmen 24 Feb 2023
  */
 
 #include "gipFFmpegUtils.h"
@@ -50,6 +51,7 @@ bool gipFFmpegUtils::openVideo(const char *filename, int* width, int* height, in
     if (checkNull(state.formatcontext, "Couldn't create create format context")) return false;
 
     if(isError(avformat_open_input(&state.formatcontext, filename, NULL, NULL))) return false;
+
 	//	Find the needed streams
 	AVCodecParameters *video_codec_params;
 	AVCodecParameters *audio_codec_params;
@@ -228,6 +230,7 @@ int gipFFmpegUtils::read_frame() {
 
 void gipFFmpegUtils::fetch_video_frame(uint8_t **data_out, int64_t* pts) {
 
+	//Commented this out since it is not used
 	//*pts = state.video_frame->pts;
 
 	auto corrected_pix_frmt = correct_for_deprecated_pixel_format(state.video_cdc_ctx->pix_fmt);
@@ -333,18 +336,4 @@ gipAVSound* gipFFmpegUtils::getAudio() {
 
 gipFFmpegUtils::VideoReaderState* gipFFmpegUtils::getState() {
 	return &state;
-}
-
-std::vector<char*> gipFFmpegUtils::splitString(const char* str, const char delimiter) {
-    std::vector<char*> tokens;
-    char* token;
-    char* str_copy = strdup(str);
-
-    token = strtok(str_copy, &delimiter);
-    while (token != NULL) {
-        tokens.push_back(token);
-        token = strtok(NULL, &delimiter);
-    }
-
-    return tokens;
 }
