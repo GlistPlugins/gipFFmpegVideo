@@ -3,6 +3,7 @@
  *
  *  Created on: 10 Jul 2021
  *      Author: kayra
+ *      Edited By: Umutcan Türkmen 24 Feb 2023
  */
 
 #ifndef GIP_FFMPEGVIDEO_H
@@ -45,6 +46,8 @@ public:
 
     bool isPlaying();
 
+    void setAppFps(int appfps);
+
 private:
     gTexture* framebuffer;
     uint8_t* framedata;
@@ -72,6 +75,12 @@ private:
     std::string filepath;
 
     gipFFmpegUtils utils;
+    int appfps;
+    double avgfps;
+    double fpsintervalnum;
+    int fpsintervalno;
+    int quotientnum;
+    int quotientno;
 };
 
 #endif /* GIP_FFMPEGVIDEO_H */
