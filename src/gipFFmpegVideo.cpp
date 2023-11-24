@@ -9,7 +9,6 @@
 #include "gipFFmpegVideo.h"
 
 gipFFmpegVideo::gipFFmpegVideo() {
-	appfps = 60;
 	framecount = 0;
 	duration = 0;
 	filepath = "";
@@ -21,8 +20,8 @@ gipFFmpegVideo::gipFFmpegVideo() {
     couldopen = false;
     closed = false;
     speed = 1.0f;
-    position = 0;
-	quotientno = 0;
+	timesincelastframe = 0.0;
+	timeperframe = 0.0;
 }
 
 gipFFmpegVideo::~gipFFmpegVideo() {
@@ -41,32 +40,12 @@ void gipFFmpegVideo::load(std::string fullPath) {
 
 	//This part calculates the number of frames with the loaded video data
 	//We don't use the metadata of video since it can be corrupted or false
-	//Also avgfps is a close approximation and might not be the exact value
+	//Also videofps is a close approximation and might not be the exact value
 
 	double duration = (double)utils.getState()->formatcontext->duration / AV_TIME_BASE;
 	double numframes = (double)utils.getState()->formatcontext->streams[0]->nb_frames;
-	avgfps = numframes / duration;
-
-	//This part calculates at which time intervals frames would be changed
-	//To give an example if the app is running with 80fps and our video is 25fps
-	//quotientnum = 80/25 = 3 fpsintervalnum = 25 / (80/3 - 25) = 25
-	//the program will display every quotientnum = 3 times resulting in 80/3 fps
-	//also to ensure the same rate every fpsintervalnum = 25 times when it won't display
-	//the frame.
-
-	quotientnum = int(appfps / avgfps);
-	fpsintervalnum = avgfps / (appfps / quotientnum - avgfps);
-	quotientno = 0;
-
-	//Approximate fpsintervalnum to the closest integer
-	if(fpsintervalnum - floor(fpsintervalnum) >= 0.5) {
-		fpsintervalnum = ceil(fpsintervalnum);
-	} else {
-		fpsintervalnum = floor(fpsintervalnum);
-	}
-
-	fpsintervalnum = floor(fpsintervalnum);
-	fpsintervalno = 0;
+	videofps = numframes / duration;
+	timeperframe = videofps / 1000.0f;
 }
 
 void gipFFmpegVideo::loadVideo(std::string videoPath) {
@@ -74,46 +53,36 @@ void gipFFmpegVideo::loadVideo(std::string videoPath) {
 }
 
 void gipFFmpegVideo::update() {
-	//When quotientnum == 1 then try to display every frame
-	if(quotientno < quotientnum - 1 || quotientnum == 1) {
-		quotientno++;
-	} else {
-		quotientno = 0;
-		//When fpsintervalnum == 0 then appfps is a multiple of avgfps
-		if(fpsintervalno < fpsintervalnum || fpsintervalnum == 0) {
-			fpsintervalno++;
-			if(closed || ispaused || !couldopen || !isplaying) {
+	timesincelastframe += appmanager->getElapsedTime();
+	if(timesincelastframe >= timeperframe) {
+		if(closed || ispaused || !couldopen || !isplaying) {
+			return;
+		}
+		if(currentframe >= framecount) {
+			close();
+			return;
+		}
+
+		int result;
+		int size_1, size_2;
+		float *buffer_1, *buffer_2;
+		while(true) {
+			result = utils.read_frame();
+
+			if(result == gipFFmpegUtils::RECEIVED_VIDEO) {
+				utils.fetch_video_frame(&framedata, nullptr);
+				framebuffer->setData(framedata, false, false);
+				currentframe++;
+				timesincelastframe = 0;
+				break;
+			} else if (result == gipFFmpegUtils::RECEIVED_NONE) {
+				gLoge("Video:") << "Could not load the video frame";
 				return;
 			}
-			if(currentframe >= framecount) {
-				close();
-				return;
-			}
-
-			int result;
-			int size_1, size_2;
-			float *buffer_1, *buffer_2;
-			while(true) {
-				result = utils.read_frame();
-
-				if(result == gipFFmpegUtils::RECEIVED_VIDEO) {
-					utils.fetch_video_frame(&framedata, nullptr);
-					framebuffer->setData(framedata, false, false);
-					currentframe++;
-					break;
-				} else if (result == gipFFmpegUtils::RECEIVED_NONE) {
-					gLoge("Video:") << "Could not load the video frame";
-					return;
-				}
-				//	Audio received, (result = number of samples)
-				utils.getAudio()->getRingBuffer()->writeWait(result * utils.getState()->num_channels, &size_1, &buffer_1, &size_2, &buffer_2);
-				utils.fetch_audio_frame(size_1, buffer_1, size_2, buffer_2);
-				utils.getAudio()->getRingBuffer()->writeAdvance(result * utils.getState()->num_channels);
-			}
-			//gLogi("ffmpeg video drawn");
-		} else {
-			//gLogi("ffmpeg video not drawn");
-			fpsintervalno = 0;
+			// Audio received, (result = number of samples)
+			utils.getAudio()->getRingBuffer()->writeWait(result * utils.getState()->num_channels, &size_1, &buffer_1, &size_2, &buffer_2);
+			utils.fetch_audio_frame(size_1, buffer_1, size_2, buffer_2);
+			utils.getAudio()->getRingBuffer()->writeAdvance(result * utils.getState()->num_channels);
 		}
 	}
 }
@@ -157,7 +126,7 @@ void gipFFmpegVideo::close() {
 }
 
 double_t gipFFmpegVideo::getPosition() {
-	return 0.0; // todo
+	return currentframe / videofps;
 }
 
 double_t gipFFmpegVideo::getDuration() {
@@ -194,8 +163,4 @@ bool gipFFmpegVideo::isPlaying() {
 
 bool gipFFmpegVideo::isPaused() {
 	return ispaused;
-}
-
-void gipFFmpegVideo::setAppFps(int appfps) {
-	this->appfps = appfps;
 }
