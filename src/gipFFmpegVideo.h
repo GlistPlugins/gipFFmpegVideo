@@ -3,7 +3,7 @@
  *
  *  Created on: 10 Jul 2021
  *      Author: kayra
- *      Edited By: Umutcan Türkmen 24 Feb 2023
+ *      Edited By: Umutcan TÃ¼rkmen 24 Feb 2023
  */
 
 #ifndef GIP_FFMPEGVIDEO_H
@@ -31,11 +31,11 @@ public:
 
     void play();
     void stop();
-    void setPaused(bool isPaused);
     void close();
+	void setPaused(bool isPaused);
 
-    int64_t getPosition(); // milisecs
-    int64_t getDuration(); // seconds
+    double_t getPosition(); // seconds
+	double_t getDuration(); // seconds
     int getWidth();
     int getHeight();
 
@@ -45,6 +45,7 @@ public:
     float getVolume();
 
     bool isPlaying();
+    bool isPaused();
 
     void setAppFps(int appfps);
 
@@ -56,17 +57,14 @@ private:
 
     int width;
     int height;
-    bool isPaused;
-    int64_t duration, position; // seconds
+    bool ispaused;
+	int64_t duration, position; // seconds
     bool couldopen;
     bool closed;
     bool isplaying;
 
-    int64_t pts; // presentation time stamp
     AVRational time_base;
     int fps;
-    double ptsec;
-    bool firstframe;
     float speed;
 
     //Audio
