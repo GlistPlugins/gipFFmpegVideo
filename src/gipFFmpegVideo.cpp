@@ -3,7 +3,7 @@
  *
  *  Created on: 10 Jul 2021
  *      Author: kayra
- *      Edited By: Umutcan Türkmen 24 Feb 2023
+ *      Edited By: Umutcan Turkmen 24 Feb 2023
  */
 
 #include "gipFFmpegVideo.h"
@@ -16,11 +16,13 @@ gipFFmpegVideo::gipFFmpegVideo() {
 	width = 0;
 	height = 0;
 	currentframe = 0;
-    isPaused = false;
+	isplaying = false;
+	ispaused = false;
     couldopen = false;
     closed = false;
     speed = 1.0f;
     position = 0;
+	quotientno = 0;
 }
 
 gipFFmpegVideo::~gipFFmpegVideo() {
@@ -36,7 +38,6 @@ void gipFFmpegVideo::load(std::string fullPath) {
 	}
 
     framebuffer = new gTexture(width, height, GL_RGBA);
-	firstframe = true;
 
 	//This part calculates the number of frames with the loaded video data
 	//We don't use the metadata of video since it can be corrupted or false
@@ -55,13 +56,14 @@ void gipFFmpegVideo::load(std::string fullPath) {
 
 	quotientnum = int(appfps / avgfps);
 	fpsintervalnum = avgfps / (appfps / quotientnum - avgfps);
+	quotientno = 0;
 
 	//Approximate fpsintervalnum to the closest integer
 	if(fpsintervalnum - floor(fpsintervalnum) >= 0.5) {
 		fpsintervalnum = ceil(fpsintervalnum);
+	} else {
+		fpsintervalnum = floor(fpsintervalnum);
 	}
-
-	else fpsintervalnum = floor(fpsintervalnum);
 
 	fpsintervalnum = floor(fpsintervalnum);
 	fpsintervalno = 0;
@@ -75,53 +77,45 @@ void gipFFmpegVideo::update() {
 	//When quotientnum == 1 then try to display every frame
 	if(quotientno < quotientnum - 1 || quotientnum == 1) {
 		quotientno++;
-	}
-	else {
+	} else {
 		quotientno = 0;
 		//When fpsintervalnum == 0 then appfps is a multiple of avgfps
 		if(fpsintervalno < fpsintervalnum || fpsintervalnum == 0) {
 			fpsintervalno++;
-			if(firstframe) {
-					firstframe = false;
-					return;
-				}
-				if(closed || isPaused || !couldopen) return;
-				if(currentframe >= framecount) {
-					close();
-					return;
-				}
-
-				int result;
-				int size_1, size_2;
-				float *buffer_1, *buffer_2;
-				while(true) {
-					result = utils.read_frame();
-
-					if(result == gipFFmpegUtils::RECEIVED_VIDEO) {
-						utils.fetch_video_frame(&framedata, &pts);
-						framebuffer->setData(framedata, true);
-						currentframe++;
-						break;
-					}
-					else if (result == gipFFmpegUtils::RECEIVED_NONE) {
-						gLoge("Video:") << "Could not load the video frame";
-						return;
-					}
-					//	Audio received, (result = number of samples)
-					utils.getAudio()->getRingBuffer()->writeWait(result * utils.getState()->num_channels, &size_1, &buffer_1, &size_2, &buffer_2);
-					utils.fetch_audio_frame(size_1, buffer_1, size_2, buffer_2);
-					utils.getAudio()->getRingBuffer()->writeAdvance(result * utils.getState()->num_channels);
-				}
-				//gLogi("ffmpeg video drawn");
+			if(closed || ispaused || !couldopen || !isplaying) {
+				return;
+			}
+			if(currentframe >= framecount) {
+				close();
+				return;
 			}
 
-		else {
+			int result;
+			int size_1, size_2;
+			float *buffer_1, *buffer_2;
+			while(true) {
+				result = utils.read_frame();
+
+				if(result == gipFFmpegUtils::RECEIVED_VIDEO) {
+					utils.fetch_video_frame(&framedata, nullptr);
+					framebuffer->setData(framedata, false, false);
+					currentframe++;
+					break;
+				} else if (result == gipFFmpegUtils::RECEIVED_NONE) {
+					gLoge("Video:") << "Could not load the video frame";
+					return;
+				}
+				//	Audio received, (result = number of samples)
+				utils.getAudio()->getRingBuffer()->writeWait(result * utils.getState()->num_channels, &size_1, &buffer_1, &size_2, &buffer_2);
+				utils.fetch_audio_frame(size_1, buffer_1, size_2, buffer_2);
+				utils.getAudio()->getRingBuffer()->writeAdvance(result * utils.getState()->num_channels);
+			}
+			//gLogi("ffmpeg video drawn");
+		} else {
 			//gLogi("ffmpeg video not drawn");
 			fpsintervalno = 0;
 		}
-
 	}
-
 }
 
 void gipFFmpegVideo::draw() {
@@ -133,9 +127,10 @@ void gipFFmpegVideo::draw(int x, int y) {
 }
 
 void gipFFmpegVideo::draw(int x, int y, int w, int h) {
-	if(closed || isPaused || !couldopen) return;
+	if(closed || !couldopen || currentframe <= 0) {
+		return;
+	}
 	framebuffer->draw(x, y, w, h);
-
 }
 
 void gipFFmpegVideo::play() {
@@ -153,7 +148,7 @@ void gipFFmpegVideo::stop() {
 }
 
 void gipFFmpegVideo::setPaused(bool isPaused) {
-	this->isPaused = isPaused;
+	ispaused = isPaused;
 }
 
 void gipFFmpegVideo::close() {
@@ -161,12 +156,12 @@ void gipFFmpegVideo::close() {
 	closed = true;
 }
 
-int64_t gipFFmpegVideo::getPosition() {
-	return ptsec;
+double_t gipFFmpegVideo::getPosition() {
+	return 0.0; // todo
 }
 
-int64_t gipFFmpegVideo::getDuration() {
-	return duration / time_base.den;
+double_t gipFFmpegVideo::getDuration() {
+	return (double_t) duration / time_base.den;
 }
 
 int gipFFmpegVideo::getWidth() {
@@ -195,6 +190,10 @@ float gipFFmpegVideo::getVolume() {
 
 bool gipFFmpegVideo::isPlaying() {
 	return isplaying;
+}
+
+bool gipFFmpegVideo::isPaused() {
+	return ispaused;
 }
 
 void gipFFmpegVideo::setAppFps(int appfps) {
