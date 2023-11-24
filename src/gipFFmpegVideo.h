@@ -47,8 +47,6 @@ public:
     bool isPlaying();
     bool isPaused();
 
-    void setAppFps(int appfps);
-
 private:
     gTexture* framebuffer;
     uint8_t* framedata;
@@ -58,7 +56,7 @@ private:
     int width;
     int height;
     bool ispaused;
-	int64_t duration, position; // seconds
+	int64_t duration;
     bool couldopen;
     bool closed;
     bool isplaying;
@@ -73,12 +71,9 @@ private:
     std::string filepath;
 
     gipFFmpegUtils utils;
-    int appfps;
-    double avgfps;
-    double fpsintervalnum;
-    int fpsintervalno;
-    int quotientnum;
-    int quotientno;
+    double videofps;
+	double timeperframe;
+	double timesincelastframe;
 };
 
 #endif /* GIP_FFMPEGVIDEO_H */
