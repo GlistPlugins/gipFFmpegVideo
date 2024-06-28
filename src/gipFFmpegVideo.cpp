@@ -105,10 +105,6 @@ void gipFFmpegVideo::update() {
 					gLoge("Video:") << "Could not load the video frame";
 					return;
 				}
-				//	Audio received, (result = number of samples)
-				utils.getAudio()->getRingBuffer()->writeWait(result * utils.getState()->num_channels, &size_1, &buffer_1, &size_2, &buffer_2);
-				utils.fetch_audio_frame(size_1, buffer_1, size_2, buffer_2);
-				utils.getAudio()->getRingBuffer()->writeAdvance(result * utils.getState()->num_channels);
 			}
 			//gLogi("ffmpeg video drawn");
 		} else {
