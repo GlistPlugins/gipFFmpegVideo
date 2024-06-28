@@ -12,8 +12,6 @@ set(PREBUILT_DIR ${PLUGIN_DIR}/prebuilts)
 list(APPEND PLUGIN_SRCS
 			${PLUGIN_DIR}/src/gipFFmpegVideo.cpp
 			${PLUGIN_DIR}/src/gipFFmpegUtils.cpp
-			${PLUGIN_DIR}/src/gipAVSound.cpp
-			${PLUGIN_DIR}/src/gRingBuffer.cpp
 )
 
 list(APPEND PLUGIN_INCLUDES
@@ -39,28 +37,17 @@ list(APPEND PLUGIN_LIBDIRS
 			${PREBUILT_DIR}/lib/win32
 )
 endif(WIN32)
-
 					
-if(WIN32)
-	list(APPEND PLUGIN_LINKLIBS
-				avcodec
-				avformat
-				avfilter
-				avdevice
-				avutil
-				swscale
-				portaudio
-				)
-elseif(LINUX)
-	list(APPEND PLUGIN_LINKLIBS
-				avcodec
-				avformat
-				avfilter
-				avdevice
-				avutil
-				swscale
-				portaudio
-				)
+if(WIN32 OR LINUX)
+	list(APPEND 
+		PLUGIN_LINKLIBS
+			avcodec
+			avformat
+			avfilter
+			avdevice
+			avutil
+			swscale
+	)
 elseif(APPLE)
 	list(APPEND PLUGIN_LINKLIBS
 				)
