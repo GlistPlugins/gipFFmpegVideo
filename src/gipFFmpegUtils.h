@@ -16,55 +16,60 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/error.h>
 #include <libswscale/swscale.h>
-#include <inttypes.h>
 }
-class gipFFmpegUtils : public gObject {
-public:
-    static const int RECEIVED_NONE = 0, RECEIVED_VIDEO = -1;
 
-    struct VideoReaderState {
-    	int width;
-    	int height;
+#include <array>
+#include <cstdint>
+#include <memory>
+#include <utility>
 
-    	AVFormatContext *formatcontext;
-    	AVSampleFormat sample_format;
-    	AVPixelFormat pixel_format;
-    	AVPacket *av_packet;
-
-    	//	Video
-    	AVCodecContext *video_cdc_ctx;
-    	AVFrame *video_frame;
-    	SwsContext *sws_ctx; // for video scaling and pixel correcting only
-    };
-
-    gipFFmpegUtils();
-    ~gipFFmpegUtils();
-
-    bool openVideo(const char *filename, int *width, int *height, int64_t* frame_count, int64_t* duration, AVRational* time_base);
-    int read_frame();
-    void fetch_video_frame(uint8_t **data_out, int64_t* pts);
-    bool seekFrame(int64_t time_stamp_in_secs);
-
-	gipFFmpegUtils::VideoReaderState* getState();
-
-    void close();
-
-private:
-    static const int STREAM_VIDEO = 0, STREAM_AUDIO = 1, STREAM_SUBTITLE = 2;
-
-    VideoReaderState state;
-
-    int streamslist[3]; // video, audio, subtitle
-
-
-    static bool isError(int errcode);
-    static bool checkNull(void *ptr, std::string errtext);
-
-    static AVPixelFormat correct_for_deprecated_pixel_format(AVPixelFormat pix_fmt);
-    std::vector<char*> splitString(const char* str, const char delimiter);
-    uint8_t *data;
-    uint8_t* dest[4];
-    int dest_linesize[4];
+enum class FrameType {
+    FRAMETYPE_VIDEO
+  , FRAMETYPE_AUDIO
+  , FRAMETYPE_NONE
 };
+
+struct VideoState {
+    bool iscreated{};
+
+    AVFormatContext* formatcontext{};
+    AVPacket*        currentpacket{};
+    AVRational       timebase{};
+
+    std::array<int, 3> streamindices;
+
+    //	Video
+    AVCodecContext* videocodeccontext{};
+    AVFrame*        videoframe{};
+    SwsContext*     swscontext{};
+    int32_t         width{};
+    int32_t         height{};
+    int64_t         framecount{};
+    int64_t         duration{};
+
+    //	Audio
+    AVCodecContext* audiocodeccontext{};
+    AVFrame*        audioframe{};
+    int32_t         audiochannelsnum{};
+    int32_t         audiosamplerate{};
+
+    uint8_t*                videoframepixeldata{};
+    int64_t                 totalframecount{}; // this may not be present
+    std::array<uint8_t*, 4> destination;
+    std::array<int32_t,  4> destinationlinesize;
+
+
+    FrameType lastreceivedframetype;
+};
+
+std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_filename);
+void gClearVideoState(std::shared_ptr<VideoState> l_state);
+
+void gAdvanceFrameInPacket(std::shared_ptr<VideoState> l_state);
+void gFetchVideoFrameToState(std::shared_ptr<VideoState> l_state);
+bool gSeekToFrame(std::shared_ptr<VideoState> l_state, int64_t t_timeStampInSec);
+
+void          gAllocateStorageForVideoFrame(std::shared_ptr<VideoState> l_state);
+AVPixelFormat gGetCorrectedPixelFormat(AVPixelFormat l_pixelFormat);
 
 #endif /* GIP_FFMPEG_UTILS_H */
