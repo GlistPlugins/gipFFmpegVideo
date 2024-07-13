@@ -51,32 +51,23 @@ public:
 
 private:
     gTexture* framebuffer{};
-    uint8_t* framedata{};
-    int64_t framecount{};
     int currentframe{};
 
     std::shared_ptr<VideoState> videostate;
     bool ispaused{false};
-    bool closed{false};
     bool isplaying{false};
 	int64_t durationInSec{};
     int64_t positionInSec{}; // seconds
+    float fpsquotient{0.0f};
+    float fpsquotientcumulative{0.0f};
 
     AVRational time_base{};
-    int fps{};
     float speed{};
 
     //Audio
     float volume{};
 
     std::string filepath;
-
-    int appfps{};
-    double avgfps{};
-    double fpsintervalnum{};
-    int fpsintervalno{};
-    int quotientnum{};
-    int quotientno{};
 };
 
 #endif /* GIP_FFMPEGVIDEO_H */

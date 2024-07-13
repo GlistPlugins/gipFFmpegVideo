@@ -9,8 +9,28 @@
 #include "gipFFmpegUtils.h"
 
 #include <cmath>
+#include <cstddef>
 
-static const int STREAM_VIDEO = 0, STREAM_AUDIO = 1, STREAM_SUBTITLE = 2;
+extern "C" {
+	#include <libavutil/pixdesc.h>
+}
+
+#include "gVideoFrameRingBuffer.h"
+
+static constexpr int STREAM_VIDEO = 0, STREAM_AUDIO = 1, STREAM_SUBTITLE = 2;
+
+// Atleast SECONDS_FOR_BUFFER seconds of frames are present in buffer.
+static constexpr int SECONDS_FOR_BUFFER{4};
+static constexpr int MINIMUM_NUM_OF_SECS_TO_PLAY{1};
+
+// Has to be dynamic buffer to accomodate lower/higher fps videos.
+static gVideoFrameRingBuffer* g_framesBuffer;
+static bool g_firstTime{true};
+
+bool hasEnoughFramesToDraw()
+{
+	return g_framesBuffer->size() >= 0;
+}
 
 std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_filename) {
 	auto state = std::make_shared<VideoState>();
@@ -70,19 +90,18 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 		if (state->streamindices[STREAM_VIDEO] == -1 && codec_params->codec_type == AVMEDIA_TYPE_VIDEO) {
 			state->streamindices[STREAM_VIDEO] = i;
 
-			int64_t framecount = state->formatcontext->streams[i]->nb_frames;
-			if(framecount > 0)
-			{
-				state->totalframecount = framecount;
-			}
-			else
-			{
-				gLogd("gLoadVideoStateFromStorage") << "Meta-data \"nb_frames\" was not found in file. Estimating...";
-				int64_t duration = state->formatcontext->duration;
-            	AVRational frame_rate = state->formatcontext->streams[i]->avg_frame_rate;
-            	state->totalframecount = (duration * frame_rate.num) / (AV_TIME_BASE * frame_rate.den);
-				gLogd("gLoadVideoStateFromStorage") << "Estimated frame rate is: " << state->totalframecount;
-			}
+			// if(framecount > 0)
+			// {
+			// 	state->totalframecount = framecount;
+			// }
+			// else
+			// {
+			// 	gLogd("gLoadVideoStateFromStorage") << "Meta-data \"nb_frames\" was not found in file. Estimating...";
+			// 	int64_t duration = state->formatcontext->duration;
+            // 	AVRational frame_rate = state->formatcontext->streams[i]->avg_frame_rate;
+            // 	state->totalframecount = (duration * frame_rate.num) / (AV_TIME_BASE * frame_rate.den);
+			// 	gLogd("gLoadVideoStateFromStorage") << "Estimated frame rate is: " << state->totalframecount;
+			// }
 
 			video_codec_params = codec_params;
 			video_codec = avcodec_find_decoder(codec_params->codec_id);
@@ -93,18 +112,28 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 			state->height = video_codec_params->height;
 			state->width = video_codec_params->width;
 
+
 			state->framecount = stream->nb_frames;
 			state->duration   = stream->duration;
 			state->timebase   = stream->time_base;
+
+			int64_t duration       = state->formatcontext->duration;
+			AVRational frame_rate  = stream->avg_frame_rate;
+			state->avgfps          = frame_rate.num / frame_rate.den;
+
+			// Allocate a bit more than needed.
+			g_framesBuffer = new gVideoFrameRingBuffer((SECONDS_FOR_BUFFER + 2) * state->avgfps);
+
 			continue;
 		}
+
 		if(state->streamindices[STREAM_AUDIO] == -1 && codec_params->codec_type == AVMEDIA_TYPE_AUDIO) {
 			state->streamindices[STREAM_AUDIO] = i;
 			gLogd("gLoadVideoStateFromStorage") << "Stream " << i << ": codec_id = "
 					<< avcodec_get_name(codec_params->codec_id);
 			audio_codec_params = codec_params;
 			audio_codec = avcodec_find_decoder(codec_params->codec_id);;
-			state->audiochannelsnum = audio_codec_params->channels;
+			state->audiochannelsnum = audio_codec_params->ch_layout.nb_channels;
 			state->audiosamplerate = audio_codec_params->sample_rate;
 			continue;
 		}
@@ -219,9 +248,8 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 		return state;
 	}
 
-	gAllocateStorageForVideoFrame(state);
-
 	auto correctedpixfmt = gGetCorrectedPixelFormat(state->videocodeccontext->pix_fmt);
+	state->numpixelcomponents = av_pix_fmt_count_planes(correctedpixfmt);
 	state->swscontext = sws_getContext(
 			state->width, state->height, correctedpixfmt,
 			state->width, state->height, AV_PIX_FMT_RGBA,
@@ -240,91 +268,146 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
     return state;
 }
 
-void gAdvanceFrameInPacket(std::shared_ptr<VideoState> l_state) {
+bool gAdvanceFramesUntilBufferFull(std::shared_ptr<VideoState> l_state) {
 
-	// Wait until we got a video packet ignoring audio, etc.
-	int avresult{};
+	if(g_firstTime)
+	{
+		// Should always buffer a bit more than needed.
+		if(g_framesBuffer->size() >= SECONDS_FOR_BUFFER * (l_state->avgfps + 2))
+		{
+			g_firstTime = false;
+			l_state->readytoplay = true;
+		}
+	}
+
+	if (g_framesBuffer->isFull() && l_state->framesprocessed == l_state->framecount)
+	{
+		return true;
+	}
+
 	AVCodecContext* currentcodeccontext{};
 	AVFrame*        currentframe{};
 	FrameType       successfulframetype{};
-	do {
-		if (l_state->currentpacket->stream_index == l_state->streamindices[STREAM_VIDEO]) {
-			currentcodeccontext = l_state->videocodeccontext;
-			currentframe 		= l_state->videoframe;
-			successfulframetype = FrameType::FRAMETYPE_VIDEO;
-		}
-		else if (l_state->currentpacket->stream_index == l_state->streamindices[STREAM_AUDIO]) {
-			currentcodeccontext = l_state->audiocodeccontext;
-			currentframe	 	= l_state->audioframe;
-			successfulframetype = FrameType::FRAMETYPE_AUDIO;
-		}
-		else {
-			av_packet_unref(l_state->currentpacket);
-			continue;
-		}
 
-		avresult = avcodec_send_packet(currentcodeccontext, l_state->currentpacket);
-		if (avresult < 0) {
-			gLoge("gAdvanceFrameInPacket")
-				<< "Couldn't receive packet from `avcodec_send_packet`: "
-				<< av_err2str(avresult);
-
-			l_state->lastreceivedframetype = FrameType::FRAMETYPE_NONE;
-
-			av_packet_unref(l_state->currentpacket);
-			return;
-		}
-
-		//	Receive the decoded frame from the codec
-		avresult = avcodec_receive_frame(currentcodeccontext, currentframe);
-		if(avresult == AVERROR(EAGAIN) || avresult == AVERROR_EOF) {
-			gLoge("gAdvanceFrameInPacket")
-				<< "End of file reached for current video.";
-
-			l_state->lastreceivedframetype = FrameType::FRAMETYPE_NONE;
-
-			av_packet_unref(l_state->currentpacket);
-			av_frame_unref(currentframe);
-			continue;
-		}
-		else if (avresult < 0) { // if other error
-			gLoge("gAdvanceFrameInPacket")
-				<< "Error executing `avcodec_receive_frame`:"
-				<< av_err2str(avresult);
-
-			l_state->lastreceivedframetype = FrameType::FRAMETYPE_NONE;
-
-			av_packet_unref(l_state->currentpacket);
-			av_frame_unref(currentframe);
-			return;
-		}
-
-		//	Wipe data back to default values
-		av_packet_unref(l_state->currentpacket);
-		l_state->lastreceivedframetype = successfulframetype;
-		return;
-
-		avresult = av_read_frame(l_state->formatcontext, l_state->currentpacket);
+	int avresult = av_read_frame(l_state->formatcontext, l_state->currentpacket);
+	if (avresult < 0)
+	{
+		gLoge("gAdvanceFramesUntilBufferFull") << "Could not read frame: " << av_err2str(avresult);
+		return hasEnoughFramesToDraw();
 	}
-	while (avresult >= 0);
+
+	if (l_state->currentpacket->stream_index == l_state->streamindices[STREAM_VIDEO]) {
+		currentcodeccontext = l_state->videocodeccontext;
+		currentframe 		= l_state->videoframe;
+		successfulframetype = FrameType::FRAMETYPE_VIDEO;
+	}
+	else if (l_state->currentpacket->stream_index == l_state->streamindices[STREAM_AUDIO]) {
+		currentcodeccontext = l_state->audiocodeccontext;
+		currentframe	 	= l_state->audioframe;
+		successfulframetype = FrameType::FRAMETYPE_AUDIO;
+	}
+	else {
+		av_packet_unref(l_state->currentpacket);
+		return hasEnoughFramesToDraw();
+	}
+
+	avresult = avcodec_send_packet(currentcodeccontext, l_state->currentpacket);
+	if (avresult < 0) {
+		gLoge("gAdvanceFramesUntilBufferFull")
+			<< "Couldn't receive packet from `avcodec_send_packet`: "
+			<< av_err2str(avresult);
+
+		l_state->lastreceivedframetype = FrameType::FRAMETYPE_NONE;
+
+		av_packet_unref(l_state->currentpacket);
+		return hasEnoughFramesToDraw();
+	}
+
+	//	Receive the decoded frame from the codec
+	avresult = avcodec_receive_frame(currentcodeccontext, currentframe);
+	if(avresult == AVERROR(EAGAIN) || avresult == AVERROR_EOF) {
+		gLoge("gAdvanceFramesUntilBufferFull")
+			<< "End of file reached for current video.";
+
+		l_state->lastreceivedframetype = FrameType::FRAMETYPE_NONE;
+
+		l_state->isfinished = true;
+
+		av_packet_unref(l_state->currentpacket);
+		av_frame_unref(currentframe);
+		return false;
+	}
+	else if (avresult < 0) { // if other error
+		gLoge("gAdvanceFramesUntilBufferFull")
+			<< "Error executing `avcodec_receive_frame`:"
+			<< av_err2str(avresult);
+
+		l_state->lastreceivedframetype = FrameType::FRAMETYPE_NONE;
+
+		av_packet_unref(l_state->currentpacket);
+		av_frame_unref(currentframe);
+		return false;
+	}
+
+	//	Wipe data back to default values
+	av_packet_unref(l_state->currentpacket);
+	l_state->lastreceivedframetype = successfulframetype;
+
+	if(successfulframetype == FrameType::FRAMETYPE_VIDEO)
+	{
+		gAddFrameToBuffer(l_state);
+		l_state->framesprocessed++;
+	}
 
 	if (avresult < 0)
 	{
-		gLoge("gAdvanceFrameInPacket") << "Error when reading frame: " << av_err2str(avresult);
+		gLoge("gAdvanceFramesUntilBufferFull") << "Error when reading frame: " << av_err2str(avresult);
 	}
+
+	return !g_firstTime;
 }
 
-void gFetchVideoFrameToState(std::shared_ptr<VideoState> l_state) {
+void gAddFrameToBuffer(std::shared_ptr<VideoState> l_state)
+{
+    uint8_t* destination[4];
+    int32_t  destinationlinesize[4];
 
-    sws_scale(
+	auto data = new uint8_t[l_state->width * l_state->height * 4];
+
+	// Stuff for sws context
+    destination[0] = data;
+    destination[1] = nullptr;
+    destination[2] = nullptr;
+    destination[3] = nullptr;
+
+	// The layout of our pixel data. [RGBA, RGBA, RGBA... ]
+    destinationlinesize[0] = l_state->width * 4;
+    destinationlinesize[1] = 0;
+    destinationlinesize[2] = 0;
+    destinationlinesize[3] = 0;
+
+	auto height = sws_scale(
 		l_state->swscontext,
 		l_state->videoframe->data, l_state->videoframe->linesize,
 		0, l_state->videoframe->height,
-		l_state->destination.data(), l_state->destinationlinesize.data()
+		destination, destinationlinesize
 	);
+
+	if(height != l_state->videoframe->height)
+	{
+		gLogd("gAddFrameToBuffer") << "Sws scaling unsucessful.";
+	}
+
+	g_framesBuffer->push(data);
+
+	destination[0] = nullptr;
 
     av_frame_unref(l_state->videoframe);
     av_frame_unref(l_state->audioframe);
+}
+
+void gFetchVideoFrameToState(std::shared_ptr<VideoState> l_state) {
+	g_framesBuffer->pop(l_state->videoframepixeldata);
 }
 
 bool gSeekToFrame(std::shared_ptr<VideoState> l_state, int64_t l_timeStampInSec) {
@@ -346,6 +429,11 @@ void gClearVideoState(std::shared_ptr<VideoState> l_state) {
 	sws_freeContext(l_state->swscontext);
 }
 
+void gClearLastFrame(std::shared_ptr<VideoState> l_state)
+{
+	l_state->videoframepixeldata.reset();
+}
+
 AVPixelFormat gGetCorrectedPixelFormat(AVPixelFormat l_pixelFormat) {
     // Fix swscaler deprecated pixel format warning
     // (YUVJ has been deprecated, change pixel format to regular YUV)
@@ -356,22 +444,4 @@ AVPixelFormat gGetCorrectedPixelFormat(AVPixelFormat l_pixelFormat) {
         case AV_PIX_FMT_YUVJ440P: return AV_PIX_FMT_YUV440P;
         default:                  return l_pixelFormat;
     }
-}
-
-void gAllocateStorageForVideoFrame(std::shared_ptr<VideoState> l_state)
-{
-	// Allocate enough memory for the video's size * rgba
-    l_state->videoframepixeldata = new uint8_t[l_state->width * l_state->height * 4];
-
-	// Stuff for sws context
-    l_state->destination[0] = l_state->videoframepixeldata;
-    l_state->destination[1] = nullptr;
-    l_state->destination[2] = nullptr;
-    l_state->destination[3] = nullptr;
-
-	// The layout of our pixel data. [RGBA, RGBA, RGBA... ]
-    l_state->destinationlinesize[0] = l_state->width * 4;
-    l_state->destinationlinesize[1] = 0;
-    l_state->destinationlinesize[2] = 0;
-    l_state->destinationlinesize[3] = 0;
 }

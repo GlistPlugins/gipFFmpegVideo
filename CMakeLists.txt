@@ -12,6 +12,7 @@ set(PREBUILT_DIR ${PLUGIN_DIR}/prebuilts)
 list(APPEND PLUGIN_SRCS
 			${PLUGIN_DIR}/src/gipFFmpegVideo.cpp
 			${PLUGIN_DIR}/src/gipFFmpegUtils.cpp
+			${PLUGIN_DIR}/src/gVideoFrameRingBuffer.cpp
 )
 
 list(APPEND PLUGIN_INCLUDES

@@ -22,36 +22,9 @@ void gipFFmpegVideo::load(std::string fullPath) {
 		gLoge("Could not open video file at: " + fullPath);
 	}
 
+	fpsquotient = static_cast<float>(videostate->avgfps) / appmanager->getTargetFramerate();
+
     framebuffer = new gTexture(videostate->width, videostate->height, GL_RGBA);
-
-	// This part calculates the number of frames with the loaded video data
-	// We don't use the metadata of video since it can be corrupted or false
-	// Also avgfps is a close approximation and might not be the exact value
-
-	double duration = static_cast<double>(videostate->formatcontext->duration / AV_TIME_BASE);
-	double numframes = static_cast<double>(videostate->formatcontext->streams[0]->nb_frames);
-	avgfps = numframes / duration;
-
-	// This part calculates at which time intervals frames would be changed
-	// To give an example if the app is running with 80fps and our video is 25fps
-	// quotientnum = 80/25 = 3 fpsintervalnum = 25 / (80/3 - 25) = 25
-	// the program will display every (quotientnum = 3) times resulting in 80/3 fps
-	// also to ensure the same rate every fpsintervalnum = 25 times when it won't display
-	// the frame.
-
-	quotientnum = static_cast<int>(appmanager->getTargetFramerate() / avgfps);
-	fpsintervalnum = avgfps / (appmanager->getTargetFramerate() / quotientnum - avgfps);
-	quotientno = 0;
-
-	//Approximate fpsintervalnum to the closest integer
-	if(fpsintervalnum - std::floor(fpsintervalnum) >= 0.5) {
-		fpsintervalnum = std::ceil(fpsintervalnum);
-	} else {
-		fpsintervalnum = std::floor(fpsintervalnum);
-	}
-
-	fpsintervalnum = std::floor(fpsintervalnum);
-	fpsintervalno = 0;
 }
 
 void gipFFmpegVideo::loadVideo(std::string videoPath) {
@@ -60,37 +33,39 @@ void gipFFmpegVideo::loadVideo(std::string videoPath) {
 
 void gipFFmpegVideo::update() {
 	// When quotientnum == 1 then try to display every frame
-	if (quotientno < quotientnum - 1 || quotientnum == 1) {
-		quotientno++;
+	if(videostate->isfinished || ispaused || !videostate->iscreated || !isplaying) {
+		return;
 	}
-	else {
-		quotientno = 0;
-		// When fpsintervalnum == 0 then appfps is a multiple of avgfps
-		if(fpsintervalno < fpsintervalnum || fpsintervalnum == 0) {
-			fpsintervalno++;
-			if(closed || ispaused || !videostate->iscreated || !isplaying) {
-				return;
-			}
-			if(currentframe >= videostate->totalframecount) {
-				close();
-				return;
-			}
+	if(currentframe >= videostate->framecount) {
+		close();
+		return;
+	}
 
-			int result;
-			int size_1, size_2;
-			float *buffer_1, *buffer_2;
-			gAdvanceFrameInPacket(videostate);
+	// Advancing 2 times ensures we have enough frames in buffer at all times.
+	// Therefore we dont lose our video fps.
+	gAdvanceFramesUntilBufferFull(videostate);
+	gAdvanceFramesUntilBufferFull(videostate);
 
-			if(videostate->lastreceivedframetype == FrameType::FRAMETYPE_VIDEO) {
-				gFetchVideoFrameToState(videostate);
-				framebuffer->setData(videostate->videoframepixeldata, false, false);
-				currentframe++;
-			}
-			//gLogi("ffmpeg video drawn");
-		} else {
-			//gLogi("ffmpeg video not drawn");
-			fpsintervalno = 0;
+	// When fpsquotientcumulative is atleast 1, that means its ready to show the frame on screen
+	// For example if app fps is 45, and our video is 30fps, fpsquotient is 0.66, Meaning that we
+	// will show 2 video frames per 3 engine tick on average.
+	if (videostate->readytoplay)
+	{
+		if(fpsquotientcumulative >= 1.0f) {
+			fpsquotientcumulative -= 1.0f;
+			gFetchVideoFrameToState(videostate);
+			framebuffer->setData(videostate->videoframepixeldata.get(), false, false);
+			// gLogd("gipFFmpegVideo::update")
+			// 	<< "Rendering frame: " << currentframe << "/" << videostate->framecount;
+
+			// gLogd("gipFFmpegVideo::update")
+			// 	<< "App FPS: " << appmanager->getFramerate()
+			// 	<< " Video FPS: " << videostate->avgfps
+			// 	<< " App Target FPS: " << appmanager->getTargetFramerate();
+			currentframe++;
+			gClearLastFrame(videostate);
 		}
+		fpsquotientcumulative += fpsquotient;
 	}
 }
 
@@ -103,7 +78,7 @@ void gipFFmpegVideo::draw(int x, int y) {
 }
 
 void gipFFmpegVideo::draw(int x, int y, int w, int h) {
-	if(closed || !videostate->iscreated || currentframe <= 0) {
+	if(videostate->isfinished || !videostate->iscreated || currentframe <= 0) {
 		return;
 	}
 	framebuffer->draw(x, y, w, h);
@@ -112,6 +87,7 @@ void gipFFmpegVideo::draw(int x, int y, int w, int h) {
 void gipFFmpegVideo::play() {
 	if(!videostate->iscreated) return;
 
+	//appmanager->setTargetFramerate(videostate->avgfps + 1);
     isplaying = true;
 }
 
@@ -129,7 +105,8 @@ void gipFFmpegVideo::setPaused(bool t_isPaused) {
 
 void gipFFmpegVideo::close() {
 	gClearVideoState(videostate);
-	closed = true;
+	gClearLastFrame(videostate);
+	videostate->isfinished = true;
 }
 
 double gipFFmpegVideo::getPosition() {

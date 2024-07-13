@@ -30,7 +30,9 @@ enum class FrameType {
 };
 
 struct VideoState {
-    bool iscreated{};
+    bool iscreated{false};
+    bool readytoplay{false};
+    bool isfinished{false};
 
     AVFormatContext* formatcontext{};
     AVPacket*        currentpacket{};
@@ -45,7 +47,9 @@ struct VideoState {
     int32_t         width{};
     int32_t         height{};
     int64_t         framecount{};
+    int64_t         framesprocessed{};
     int64_t         duration{};
+    int32_t         numpixelcomponents;
 
     //	Audio
     AVCodecContext* audiocodeccontext{};
@@ -53,10 +57,8 @@ struct VideoState {
     int32_t         audiochannelsnum{};
     int32_t         audiosamplerate{};
 
-    uint8_t*                videoframepixeldata{};
-    int64_t                 totalframecount{}; // this may not be present
-    std::array<uint8_t*, 4> destination;
-    std::array<int32_t,  4> destinationlinesize;
+    std::unique_ptr<uint8_t[]> videoframepixeldata{};
+    int64_t                    avgfps{};
 
 
     FrameType lastreceivedframetype;
@@ -64,8 +66,10 @@ struct VideoState {
 
 std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_filename);
 void gClearVideoState(std::shared_ptr<VideoState> l_state);
+void gClearLastFrame(std::shared_ptr<VideoState> l_state);
 
-void gAdvanceFrameInPacket(std::shared_ptr<VideoState> l_state);
+bool gAdvanceFramesUntilBufferFull(std::shared_ptr<VideoState> l_state);
+void gAddFrameToBuffer(std::shared_ptr<VideoState> l_state);
 void gFetchVideoFrameToState(std::shared_ptr<VideoState> l_state);
 bool gSeekToFrame(std::shared_ptr<VideoState> l_state, int64_t t_timeStampInSec);
 
