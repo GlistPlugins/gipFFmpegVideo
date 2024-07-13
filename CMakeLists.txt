@@ -2,7 +2,7 @@ cmake_minimum_required (VERSION 3.10.2)
 
 set(pluginname gipFFmpegVideo)
 #if(NOT DEFINED pluginname)
-    
+
 #endif()
 
 set(PLUGIN_DIR ${PLUGINS_DIR}/${pluginname})
@@ -27,28 +27,21 @@ list(APPEND PLUGIN_INCLUDES
 )
 
 if(WIN32)
-list(APPEND PLUGIN_LINKDIRS
-			${PREBUILT_DIR}/lib/win32
-			${PREBUILT_DIR}/bin
-)
+	set(PLUGIN_LIBS_DIR "${PREBUILT_DIR}/lib/win32")
+elseif(LINUX)
+	set(PLUGIN_LIBS_DIR "${PREBUILT_DIR}/lib/linux")
+endif()
 
-#set(PLUGIN_LIBDIRS ${PREBUILT_DIR}/lib/win32)
-list(APPEND PLUGIN_LIBDIRS
-			${PREBUILT_DIR}/lib/win32
-)
-endif(WIN32)
-					
+list(APPEND PLUGIN_LINKDIRS ${PLUGIN_LIBS_DIR})
+list(APPEND PLUGIN_LIBDIRS ${PLUGIN_LIBS_DIR})
+
 if(WIN32 OR LINUX)
-	list(APPEND 
-		PLUGIN_LINKLIBS
-			avcodec
-			avformat
-			avfilter
-			avdevice
-			avutil
-			swscale
-	)
-elseif(APPLE)
 	list(APPEND PLUGIN_LINKLIBS
-				)
-endif(WIN32)
+		avcodec
+		avformat
+		avfilter
+		avdevice
+		avutil
+		swscale
+	)
+endif()
