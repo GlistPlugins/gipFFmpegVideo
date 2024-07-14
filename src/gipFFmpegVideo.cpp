@@ -109,8 +109,14 @@ void gipFFmpegVideo::close() {
 	videostate->isfinished = true;
 }
 
-double gipFFmpegVideo::getPosition() {
-	return 0.0; // TODO
+void gipFFmpegVideo::setPosition(float t_timeInSeconds)
+{
+	gSeekToFrame(videostate, t_timeInSeconds);
+}
+
+double gipFFmpegVideo::getPosition()
+{
+    return 0.0; // TODO
 }
 
 double gipFFmpegVideo::getDuration() {

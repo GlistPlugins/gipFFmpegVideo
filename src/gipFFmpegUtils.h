@@ -71,7 +71,7 @@ void gClearLastFrame(std::shared_ptr<VideoState> l_state);
 bool gAdvanceFramesUntilBufferFull(std::shared_ptr<VideoState> l_state);
 void gAddFrameToBuffer(std::shared_ptr<VideoState> l_state);
 void gFetchVideoFrameToState(std::shared_ptr<VideoState> l_state);
-bool gSeekToFrame(std::shared_ptr<VideoState> l_state, int64_t t_timeStampInSec);
+bool gSeekToFrame(std::shared_ptr<VideoState> l_state, float t_timeStampInSec);
 
 void          gAllocateStorageForVideoFrame(std::shared_ptr<VideoState> l_state);
 AVPixelFormat gGetCorrectedPixelFormat(AVPixelFormat l_pixelFormat);

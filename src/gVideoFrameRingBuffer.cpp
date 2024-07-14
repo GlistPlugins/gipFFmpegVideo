@@ -44,6 +44,15 @@ bool gVideoFrameRingBuffer::pop(std::unique_ptr<uint8_t[]>& value)
     return true;
 }
 
+bool gVideoFrameRingBuffer::popAll()
+{
+    m_tail = 0;
+    m_head = 0;
+    m_count = 0;
+    m_buffer = decltype(m_buffer)(m_capacity);
+    return true;
+}
+
 bool gVideoFrameRingBuffer::isFull() const
 {
     return m_count == m_capacity;

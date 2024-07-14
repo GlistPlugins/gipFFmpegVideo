@@ -19,6 +19,7 @@ public:
 
     bool push(uint8_t* t_ptr);
     bool pop(std::unique_ptr<uint8_t[]>& value);
+    bool popAll();
 
     bool isFull() const;
     bool isEmpty() const;

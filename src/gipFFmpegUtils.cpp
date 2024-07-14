@@ -25,7 +25,7 @@ static constexpr int MINIMUM_NUM_OF_SECS_TO_PLAY{1};
 
 // Has to be dynamic buffer to accomodate lower/higher fps videos.
 static gVideoFrameRingBuffer* g_framesBuffer;
-static bool g_firstTime{true};
+static bool g_needAllocate{true};
 
 bool hasEnoughFramesToDraw()
 {
@@ -270,12 +270,12 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 
 bool gAdvanceFramesUntilBufferFull(std::shared_ptr<VideoState> l_state) {
 
-	if(g_firstTime)
+	if(g_needAllocate)
 	{
 		// Should always buffer a bit more than needed.
 		if(g_framesBuffer->size() >= SECONDS_FOR_BUFFER * (l_state->avgfps + 2))
 		{
-			g_firstTime = false;
+			g_needAllocate = false;
 			l_state->readytoplay = true;
 		}
 	}
@@ -376,7 +376,7 @@ bool gAdvanceFramesUntilBufferFull(std::shared_ptr<VideoState> l_state) {
 		gLoge("gAdvanceFramesUntilBufferFull") << "Error when reading frame: " << av_err2str(avresult);
 	}
 
-	return !g_firstTime;
+	return !g_needAllocate;
 }
 
 void gAddFrameToBuffer(std::shared_ptr<VideoState> l_state)
@@ -422,10 +422,38 @@ void gFetchVideoFrameToState(std::shared_ptr<VideoState> l_state) {
 	g_framesBuffer->pop(l_state->videoframepixeldata);
 }
 
-bool gSeekToFrame(std::shared_ptr<VideoState> l_state, int64_t l_timeStampInSec) {
+bool gSeekToFrame(std::shared_ptr<VideoState> l_state, float l_timeStampInSec) {
+	
+	auto fmtcontext = l_state->formatcontext;
+	auto videostream = l_state->formatcontext->streams[l_state->streamindices[STREAM_VIDEO]];
+	auto audiostream = l_state->formatcontext->streams[l_state->streamindices[STREAM_AUDIO]];
+	
+	int64_t timestamptimeshundred = static_cast<int64_t>(l_timeStampInSec * 100);
 
-	av_seek_frame(l_state->formatcontext, l_state->streamindices[STREAM_VIDEO], l_timeStampInSec, AVSEEK_FLAG_BACKWARD);
+	int64_t seekTarget = av_rescale(timestamptimeshundred, videostream->time_base.den, videostream->time_base.num) / 100;
+	
+	//int avresult = avformat_seek_file(fmtcontext, l_state->streamindices[STREAM_VIDEO], seekTarget - videostream->time_base.den, seekTarget, seekTarget, 0);
+	
+	int avresult = av_seek_frame(fmtcontext, l_state->streamindices[STREAM_VIDEO], seekTarget, 0);
+	if(avresult < 0)
+	{
+		gLoge("gSeekToFrame") << "Error when seeking to time: " << l_timeStampInSec << " " << av_err2str(avresult);
+	}
+
 	avcodec_flush_buffers(l_state->videocodeccontext);
+	if(avresult < 0)
+	{
+		gLoge("gSeekToFrame") << "Error when flushing codec context buffers " << av_err2str(avresult);
+	}
+	g_framesBuffer->popAll();
+
+	av_frame_unref(l_state->videoframe);
+	av_frame_unref(l_state->audioframe);
+	av_packet_unref(l_state->currentpacket);
+
+	l_state->framesprocessed = 0;
+	l_state->readytoplay = false;
+	g_needAllocate = true;
 
 	return true;
 }

@@ -36,6 +36,7 @@ public:
     void close();
 	void setPaused(bool t_isPaused);
 
+    void setPosition(float t_timeInSeconds);
     double getPosition(); // seconds
 	double getDuration(); // seconds
     int getWidth();
