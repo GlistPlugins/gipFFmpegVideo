@@ -280,7 +280,7 @@ bool gAdvanceFramesUntilBufferFull(std::shared_ptr<VideoState> l_state) {
 		}
 	}
 
-	if (g_framesBuffer->isFull() && l_state->framesprocessed == l_state->framecount)
+	if (g_framesBuffer->isFull() || l_state->framesprocessed == l_state->framecount)
 	{
 		return true;
 	}
@@ -311,43 +311,55 @@ bool gAdvanceFramesUntilBufferFull(std::shared_ptr<VideoState> l_state) {
 		return hasEnoughFramesToDraw();
 	}
 
-	avresult = avcodec_send_packet(currentcodeccontext, l_state->currentpacket);
-	if (avresult < 0) {
-		gLoge("gAdvanceFramesUntilBufferFull")
-			<< "Couldn't receive packet from `avcodec_send_packet`: "
-			<< av_err2str(avresult);
 
-		l_state->lastreceivedframetype = FrameType::FRAMETYPE_NONE;
+	// Sometimes the packet may be empty. In that case, we get another packet until
+	// we find one that has some information.
+	do
+	{
+		avresult = avcodec_send_packet(currentcodeccontext, l_state->currentpacket);
+		if (avresult < 0) {
+			gLoge("gAdvanceFramesUntilBufferFull")
+				<< "Couldn't receive packet from `avcodec_send_packet`: "
+				<< av_err2str(avresult);
 
-		av_packet_unref(l_state->currentpacket);
-		return hasEnoughFramesToDraw();
-	}
+			l_state->lastreceivedframetype = FrameType::FRAMETYPE_NONE;
 
-	//	Receive the decoded frame from the codec
-	avresult = avcodec_receive_frame(currentcodeccontext, currentframe);
-	if(avresult == AVERROR(EAGAIN) || avresult == AVERROR_EOF) {
-		gLoge("gAdvanceFramesUntilBufferFull")
-			<< "End of file reached for current video.";
+			av_packet_unref(l_state->currentpacket);
+			return hasEnoughFramesToDraw();
+		}
 
-		l_state->lastreceivedframetype = FrameType::FRAMETYPE_NONE;
+		//	Receive the decoded frame from the codec
+		avresult = avcodec_receive_frame(currentcodeccontext, currentframe);
+		if(avresult == AVERROR(EAGAIN)) {
+			av_frame_unref(currentframe);
+			return false;
+		}
+		else if(avresult == AVERROR_EOF)
+		{
+			gLoge("gAdvanceFramesUntilBufferFull")
+				<< "End of file reached for current video.";
 
-		l_state->isfinished = true;
+			l_state->lastreceivedframetype = FrameType::FRAMETYPE_NONE;
 
-		av_packet_unref(l_state->currentpacket);
-		av_frame_unref(currentframe);
-		return false;
-	}
-	else if (avresult < 0) { // if other error
-		gLoge("gAdvanceFramesUntilBufferFull")
-			<< "Error executing `avcodec_receive_frame`:"
-			<< av_err2str(avresult);
+			l_state->isfinished = true;
 
-		l_state->lastreceivedframetype = FrameType::FRAMETYPE_NONE;
+			av_packet_unref(l_state->currentpacket);
+			av_frame_unref(currentframe);
+			return false;
+		}
+		else if (avresult < 0) { // if other error
+			gLoge("gAdvanceFramesUntilBufferFull")
+				<< "Error executing `avcodec_receive_frame`:"
+				<< av_err2str(avresult);
 
-		av_packet_unref(l_state->currentpacket);
-		av_frame_unref(currentframe);
-		return false;
-	}
+			l_state->lastreceivedframetype = FrameType::FRAMETYPE_NONE;
+
+			av_packet_unref(l_state->currentpacket);
+			av_frame_unref(currentframe);
+			return false;
+		}
+	} while (avresult == AVERROR(EAGAIN));
+	
 
 	//	Wipe data back to default values
 	av_packet_unref(l_state->currentpacket);
