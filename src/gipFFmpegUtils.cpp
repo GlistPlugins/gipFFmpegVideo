@@ -3,337 +3,485 @@
  *
  *  Created on: 10 Jul 2021
  *      Author: kayra
- *      Edited By: Umutcan Türkmen 24 Feb 2023
+ *      Edited By: Umutcan Tï¿½rkmen 24 Feb 2023
  */
 
 #include "gipFFmpegUtils.h"
+
 #include <cmath>
-gipFFmpegUtils::gipFFmpegUtils() {
-	streamslist[STREAM_VIDEO] = -1;
-	streamslist[STREAM_AUDIO] = -1;
-	streamslist[STREAM_SUBTITLE] = -1;
+#include <cstddef>
+
+extern "C" {
+	#include <libavutil/pixdesc.h>
 }
 
-gipFFmpegUtils::~gipFFmpegUtils() {
-	delete data;
+#include "gVideoFrameRingBuffer.h"
+
+static constexpr int STREAM_VIDEO = 0, STREAM_AUDIO = 1, STREAM_SUBTITLE = 2;
+
+// Atleast SECONDS_FOR_BUFFER seconds of frames are present in buffer.
+static constexpr int SECONDS_FOR_BUFFER{4};
+static constexpr int MINIMUM_NUM_OF_SECS_TO_PLAY{1};
+
+// Has to be dynamic buffer to accomodate lower/higher fps videos.
+static gVideoFrameRingBuffer* g_framesBuffer;
+static bool g_needAllocate{true};
+
+bool hasEnoughFramesToDraw()
+{
+	return g_framesBuffer->size() >= 0;
 }
 
-void gipFFmpegUtils::audio_callback(int num_channels, int buffer_size, float* buffer, void* user_ptr) {
+std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_filename) {
+	auto state = std::make_shared<VideoState>();
 
-	constexpr float freq = 440.0f;
-	static int i = 0;
+	state->streamindices[STREAM_VIDEO] = -1;
+	state->streamindices[STREAM_AUDIO] = -1;
+	state->streamindices[STREAM_SUBTITLE] = -1;
 
-	//	Clear the buffer
-	auto buffer_ptr = buffer;
-	auto buffer_ptr_end = buffer + buffer_size * num_channels;
-	while(buffer_ptr < buffer_ptr_end) {
-//		*buffer_ptr++ = sinf(2 * 3.141592f * i++ * freq / AV_SAMPLE_RATE);
-		*buffer_ptr++ = 0.0f;
+	state->formatcontext = avformat_alloc_context();
+    if (nullptr == state->formatcontext)
+	{
+		gLoge("gLoadVideoStateFromStorage") << "Couldn't create create format context.";
+		avformat_free_context(state->formatcontext);
+
+		state->iscreated = false;
+		return state;
 	}
 
-	gRingBuffer* ring_buffer = (gRingBuffer*)user_ptr;
-	int elements = num_channels * buffer_size;
+	int averror = avformat_open_input(&state->formatcontext, t_filename.c_str(), nullptr, nullptr);
+    if(averror < 0)
+	{
+		gLoge("gLoadVideoStateFromStorage") << "Error executing `avformat_open_input`: " << av_err2str(averror);
 
-	if(ring_buffer->canRead(elements)) {
-		int size1, size2;
-		float *buffer1, *buffer2;
+		avformat_close_input(&state->formatcontext);
 
-		ring_buffer->read(elements, &size1, &buffer1, &size2, &buffer2);
-		memcpy(buffer, buffer1, size1 * sizeof(float));
-		if(size2 > 0) memcpy(buffer + size1, buffer2, size2 * sizeof(float));
-		ring_buffer->readAdvance(elements);
+		state->iscreated = false;
+		return state;
 	}
-}
 
-bool gipFFmpegUtils::openVideo(const char *filename, int* width, int* height, int64_t* frame_count, int64_t* duration, AVRational* time_base) {
-	state.formatcontext = avformat_alloc_context();
+	averror = avformat_find_stream_info(state->formatcontext, nullptr);
+	if (averror < 0) {
+        gLoge("gLoadVideoStateFromStorage") << "Error executing `avformat_find_stream_info`: " << av_err2str(averror);
 
-    if (checkNull(state.formatcontext, "Couldn't create create format context")) return false;
+		avformat_close_input(&state->formatcontext);
 
-    if(isError(avformat_open_input(&state.formatcontext, filename, NULL, NULL))) return false;
+		state->iscreated = false;
+		return state;
+    }
 
 	//	Find the needed streams
 	AVCodecParameters *video_codec_params;
 	AVCodecParameters *audio_codec_params;
 	const AVCodec *video_codec;
 	const AVCodec *audio_codec;
-	for (int i = 0; i < state.formatcontext->nb_streams; i++) {
-		auto stream = state.formatcontext->streams[i];
 
-		auto codec_params = stream->codecpar;
-		auto codec = avcodec_find_decoder(codec_params->codec_id);
-		if (!codec) { // TODO: Add a thing so we don't play something that we don't support the codec of.
-			continue;
-		}
-		if (streamslist[STREAM_VIDEO] == -1 && codec_params->codec_type == AVMEDIA_TYPE_VIDEO) {
-			streamslist[STREAM_VIDEO] = i;
+	for (int i = 0; i < state->formatcontext->nb_streams; i++) {
+		auto* stream = state->formatcontext->streams[i];
+
+		auto* codec_params = stream->codecpar;
+
+		if (nullptr == codec_params) {
+            gLoge("gLoadVideoStateFromStorage") << "Stream " << i << " has null codec parameters.";
+            continue;
+        }
+
+
+		if (state->streamindices[STREAM_VIDEO] == -1 && codec_params->codec_type == AVMEDIA_TYPE_VIDEO) {
+			state->streamindices[STREAM_VIDEO] = i;
+
+			// if(framecount > 0)
+			// {
+			// 	state->totalframecount = framecount;
+			// }
+			// else
+			// {
+			// 	gLogd("gLoadVideoStateFromStorage") << "Meta-data \"nb_frames\" was not found in file. Estimating...";
+			// 	int64_t duration = state->formatcontext->duration;
+            // 	AVRational frame_rate = state->formatcontext->streams[i]->avg_frame_rate;
+            // 	state->totalframecount = (duration * frame_rate.num) / (AV_TIME_BASE * frame_rate.den);
+			// 	gLogd("gLoadVideoStateFromStorage") << "Estimated frame rate is: " << state->totalframecount;
+			// }
+
 			video_codec_params = codec_params;
-			video_codec = codec;
+			video_codec = avcodec_find_decoder(codec_params->codec_id);
 
-			state.height = video_codec_params->height;
-			state.width = video_codec_params->width;
+			gLogd("gLoadVideoStateFromStorage") << "Stream " << i << ": codec_id = "
+								<< avcodec_get_name(codec_params->codec_id);
 
-			*frame_count = stream->nb_frames;
-			*duration = stream->duration;
-			*time_base = stream->time_base;
+			state->height = video_codec_params->height;
+			state->width = video_codec_params->width;
+
+
+			state->framecount = stream->nb_frames;
+			state->duration   = stream->duration;
+			state->timebase   = stream->time_base;
+
+			int64_t duration       = state->formatcontext->duration;
+			AVRational frame_rate  = stream->avg_frame_rate;
+			state->avgfps          = frame_rate.num / frame_rate.den;
+
+			// Allocate a bit more than needed.
+			g_framesBuffer = new gVideoFrameRingBuffer((SECONDS_FOR_BUFFER + 2) * state->avgfps);
+
 			continue;
 		}
-		if(streamslist[STREAM_AUDIO] == -1 && codec_params->codec_type == AVMEDIA_TYPE_AUDIO) {
-			streamslist[STREAM_AUDIO] = i;
 
-        	logi("received audio");
+		if(state->streamindices[STREAM_AUDIO] == -1 && codec_params->codec_type == AVMEDIA_TYPE_AUDIO) {
+			state->streamindices[STREAM_AUDIO] = i;
+			gLogd("gLoadVideoStateFromStorage") << "Stream " << i << ": codec_id = "
+					<< avcodec_get_name(codec_params->codec_id);
 			audio_codec_params = codec_params;
-			audio_codec = codec;
-			state.num_channels = audio_codec_params->channels;
-			state.sample_rate = audio_codec_params->sample_rate;
+			audio_codec = avcodec_find_decoder(codec_params->codec_id);;
+			state->audiochannelsnum = audio_codec_params->ch_layout.nb_channels;
+			state->audiosamplerate = audio_codec_params->sample_rate;
 			continue;
 		}
 
 	}
 
-	if (streamslist[STREAM_VIDEO] == -1) {
-		loge("Valid video stream could not be created from the file");
-		return false;
-	}
-	if (streamslist[STREAM_AUDIO] == -1) {
-		loge("Valid audio stream could not be created from the file");
-		return false;
+	if (state->streamindices[STREAM_VIDEO] == -1) {
+		gLoge("gLoadVideoStateFromStorage") << "Valid VIDEO stream could not be created from the file.";
+
+		state->iscreated = false;
+		return state;
 	}
 
-	if(state.num_channels != 2) {
-		gLoge("Only stereo!");
+	if (state->streamindices[STREAM_AUDIO] == -1) {
+		// Audio is optional, so log should be a warning
+		gLogw("gLoadVideoStateFromStorage") << "Valid AUDIO stream could not be created from the file.";
+
+		state->iscreated = false;
+		return state;
 	}
 
-	audio.getRingBuffer()->init(8192, state.sample_rate * NUM_CHANNELS);
-	audio.start(NUM_CHANNELS, 512, state.sample_rate, audio_callback);
+	if(state->audiochannelsnum != 2) {
+ 		gLogd("gLoadVideoStateFromStorage") << "Only stereo audio found in stream.";
+	}
 
 	// Initialize codec context for the video
-    state.video_cdc_ctx = avcodec_alloc_context3(video_codec);
-    if (checkNull(state.video_cdc_ctx, "Could not create AVCodecContext for the video."))
-    	return false;
+    state->videocodeccontext = avcodec_alloc_context3(video_codec);
+    if (nullptr == state->videocodeccontext)
+	{
+		gLoge("gLoadVideoStateFromStorage")
+			<< "Could not create AVCodecContext for the found VIDEO codec :"
+			<< avcodec_get_name(video_codec->id) ;
+		state->iscreated = false;
+		return state;
+	}
 
     // Initialize codec context for the audio
-    state.audio_cdc_ctx = avcodec_alloc_context3(audio_codec);
-    if (checkNull(state.audio_cdc_ctx, "Could not create AVCodecContext for the audio."))
-        return false;
+    state->audiocodeccontext = avcodec_alloc_context3(audio_codec);
+    if (nullptr == state->audiocodeccontext)
+	{
+		gLoge("gLoadVideoStateFromStorage")
+			<< "Could not create AVCodecContext for the audio.";
+		state->iscreated = false;
+		return state;
+	}
 
     // Turn video codec parameters to codec context
-    if (isError(avcodec_parameters_to_context(state.video_cdc_ctx, video_codec_params)))
-    	return false;
+	averror = avcodec_parameters_to_context(state->videocodeccontext, video_codec_params);
+    if (averror < 0)
+	{
+		gLoge("gLoadVideoStateFromStorage")
+			<< "Error when executing: avcodec_parameters_to_context"
+			<< av_err2str(averror);
+		state->iscreated = false;
+		return state;
+	}
     // Turn audio codec parameters to codec context
-    if (isError(avcodec_parameters_to_context(state.audio_cdc_ctx, audio_codec_params)))
-    	return false;
+	averror = avcodec_parameters_to_context(state->audiocodeccontext, audio_codec_params);
+   	if (averror < 0)
+	{
+		gLoge("gLoadVideoStateFromStorage")
+			<< "Error executing `avcodec_parameters_to_context`: "
+			<< av_err2str(averror);
+		state->iscreated = false;
+		return state;
+	}
+
 
     // Initialize the video codec context to use the codec for the video
-    if(isError(avcodec_open2(state.video_cdc_ctx, video_codec, nullptr)))
-    	return false;
-    // Initialize the audio codec context to use the codec for the audio
-    if(isError(avcodec_open2(state.audio_cdc_ctx, audio_codec, nullptr)))
-    	return false;
-
-    state.video_frame = av_frame_alloc();
-    state.av_packet = av_packet_alloc();
-    state.audio_frame = av_frame_alloc();
-
-    if (checkNull(state.video_frame, "Could not allocate the video frame!") ||
-        checkNull(state.av_packet, "Could not allocate the packet!") ||
-		checkNull(state.audio_frame, "Could not allocate the audio frame!")
-		)
-    	return false;
-
-
-    *width = state.width;
-    *height = state.height;
-
-
-    data = new uint8_t[state.width * state.height * 4];
-    dest[0] = data;
-    dest[1] = NULL;
-    dest[2] = NULL;
-    dest[3] = NULL;
-    dest_linesize[0] = state.width * 4;
-    dest_linesize[1] = 0;
-    dest_linesize[2] = 0;
-    dest_linesize[3] = 0;
-
-
-    return true;
-}
-
-int gipFFmpegUtils::read_frame() {
-
-	// Wait until we got a video packet ignoring audio, etc.
-	    int response;
-	    while (av_read_frame(state.formatcontext, state.av_packet) >= 0) { // Until the EOF
-	        if (state.av_packet->stream_index == streamslist[STREAM_VIDEO]) {
-
-	        	//	Send packet to decoder (codec)
-				if (isError(avcodec_send_packet(state.video_cdc_ctx, state.av_packet))) {
-				    av_packet_unref(state.av_packet);
-					return RECEIVED_NONE;
-				}
-
-				//	Receive the decoded frame from the codec
-				response = avcodec_receive_frame(state.video_cdc_ctx, state.video_frame);
-				if(response == AVERROR(EAGAIN) || response == AVERROR_EOF) {
-					av_packet_unref(state.av_packet);
-					av_frame_unref(state.video_frame);
-					continue;
-				}
-				else if (isError(response)) { // if other error
-					av_packet_unref(state.av_packet);
-					av_frame_unref(state.video_frame);
-					return RECEIVED_NONE;
-				}
-
-				state.pixel_format = correct_for_deprecated_pixel_format((AVPixelFormat)state.video_frame->format);
-
-				//	Wipe data back to default values
-				av_packet_unref(state.av_packet);
-				return RECEIVED_VIDEO;
-	        }
-	        else if (state.av_packet->stream_index == streamslist[STREAM_AUDIO]) {
-	        	//	Send packet to decoder (codec)
-				if (isError(avcodec_send_packet(state.audio_cdc_ctx, state.av_packet))) {
-					av_packet_unref(state.av_packet);
-					return RECEIVED_NONE;
-				}
-
-				//	Receive the decoded frame from the codec
-				response = avcodec_receive_frame(state.audio_cdc_ctx, state.audio_frame);
-				if(response == AVERROR(EAGAIN) || response == AVERROR_EOF) {
-					av_packet_unref(state.av_packet);
-					av_frame_unref(state.audio_frame);
-					continue;
-				}
-				else if (isError(response)) { // if other error
-					av_packet_unref(state.av_packet);
-					av_frame_unref(state.audio_frame);
-					return RECEIVED_NONE;
-				}
-
-				state.sample_format = (AVSampleFormat)state.audio_frame->format;
-
-				//	Wipe data back to default values
-				av_packet_unref(state.av_packet);
-				return state.audio_frame->nb_samples;
-	        }
-	        else {
-	        	//	Packet is from some other stream, igrone
-	        	av_packet_unref(state.av_packet);
-	        	continue;
-	        }
-	    }
-
-	    return RECEIVED_NONE;
-}
-
-void gipFFmpegUtils::fetch_video_frame(uint8_t **data_out, int64_t* pts) {
-
-	//Commented this out since it is not used
-	//*pts = state.video_frame->pts;
-
-	auto corrected_pix_frmt = correct_for_deprecated_pixel_format(state.video_cdc_ctx->pix_fmt);
-	state.sws_ctx = sws_getContext(	state.width, state.height, corrected_pix_frmt,
-									state.width, state.height, AV_PIX_FMT_RGBA,
-									SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
-
-	if (checkNull(state.sws_ctx, "Couldn't initialize SwsContext"))
-		return;
-
-    sws_scale(state.sws_ctx, state.video_frame->data, state.video_frame->linesize, 0, state.video_frame->height, dest, dest_linesize);
-    sws_freeContext(state.sws_ctx);
-
-    av_frame_unref(state.video_frame);
-    av_frame_unref(state.audio_frame);
-
-    *data_out = data;
-}
-
-void gipFFmpegUtils::fetch_audio_frame_sub(int size, float* buffer, int offset) {
-	if (state.num_channels != 2) {
-		gLoge("Only supported type is Stereo!");
-		return;
+	averror = avcodec_open2(state->videocodeccontext, video_codec, nullptr);
+	if (averror < 0)
+	{
+		gLoge("gLoadVideoStateFromStorage")
+			<< "Error executing `avcodec_open2`: "
+			<< av_err2str(averror);
+		state->iscreated = false;
+		return state;
 	}
 
+    // Initialize the audio codec context to use the codec for the audio
+	averror = avcodec_open2(state->audiocodeccontext, audio_codec, nullptr);
+	if (averror < 0)
+	{
+		gLoge("gLoadVideoStateFromStorage")
+			<< "Error executing `avcodec_open2`: "
+			<< av_err2str(averror);
+		state->iscreated = false;
+		return state;
+	}
 
-	if (state.sample_format == AV_SAMPLE_FMT_FLTP) {
-		float *ptr_l_in = (float*)state.audio_frame->data[0];
-		float *ptr_r_in = (float*)state.audio_frame->data[1];
+    state->videoframe = av_frame_alloc();
+	if (nullptr == state->videoframe)
+	{
+		gLoge("gLoadVideoStateFromStorage") << "Could not allocate the AUDIO frame!";
+		state->iscreated = false;
+		return state;
+	}
 
-		float *ptr_out = buffer;
-		float *ptr_out_end = buffer + size;
-		while(ptr_out < ptr_out_end) {
-			*ptr_out++ = *ptr_l_in++;
-			*ptr_out++ = *ptr_r_in++;
+    state->audioframe = av_frame_alloc();
+	if (nullptr == state->audioframe)
+	{
+		gLoge("gLoadVideoStateFromStorage") << "Could not allocate the AUDIO frame!";
+		state->iscreated = false;
+		return state;
+	}
+
+	state->currentpacket = av_packet_alloc();
+	if (nullptr == state->currentpacket)
+	{
+		gLoge("gLoadVideoStateFromStorage") << "Could not allocate AVPacket!";
+		state->iscreated = false;
+		return state;
+	}
+
+	auto correctedpixfmt = gGetCorrectedPixelFormat(state->videocodeccontext->pix_fmt);
+	state->numpixelcomponents = av_pix_fmt_count_planes(correctedpixfmt);
+	state->swscontext = sws_getContext(
+			state->width, state->height, correctedpixfmt,
+			state->width, state->height, AV_PIX_FMT_RGBA,
+			SWS_FAST_BILINEAR, nullptr, nullptr, nullptr
+	);
+
+	if (nullptr == state->swscontext)
+	{
+		gLoge("gLoadVideoStateFromStorage") << "Couldn't initialize SwsContext";
+		state->iscreated = false;
+		return state;
+	}
+
+	state->iscreated = true;
+
+    return state;
+}
+
+bool gAdvanceFramesUntilBufferFull(std::shared_ptr<VideoState> l_state) {
+
+	if(g_needAllocate)
+	{
+		// Should always buffer a bit more than needed.
+		if(g_framesBuffer->size() >= SECONDS_FOR_BUFFER * (l_state->avgfps + 2))
+		{
+			g_needAllocate = false;
+			l_state->readytoplay = true;
 		}
 	}
-	else {
-		gLoge("gipFFmpegVideo") << "Sample format not supported";
+
+	if (g_framesBuffer->isFull() || l_state->framesprocessed == l_state->framecount)
+	{
+		return true;
 	}
+
+	AVCodecContext* currentcodeccontext{};
+	AVFrame*        currentframe{};
+	FrameType       successfulframetype{};
+
+	int avresult = av_read_frame(l_state->formatcontext, l_state->currentpacket);
+	if (avresult < 0)
+	{
+		gLoge("gAdvanceFramesUntilBufferFull") << "Could not read frame: " << av_err2str(avresult);
+		return hasEnoughFramesToDraw();
+	}
+
+	if (l_state->currentpacket->stream_index == l_state->streamindices[STREAM_VIDEO]) {
+		currentcodeccontext = l_state->videocodeccontext;
+		currentframe 		= l_state->videoframe;
+		successfulframetype = FrameType::FRAMETYPE_VIDEO;
+	}
+	else if (l_state->currentpacket->stream_index == l_state->streamindices[STREAM_AUDIO]) {
+		currentcodeccontext = l_state->audiocodeccontext;
+		currentframe	 	= l_state->audioframe;
+		successfulframetype = FrameType::FRAMETYPE_AUDIO;
+	}
+	else {
+		av_packet_unref(l_state->currentpacket);
+		return hasEnoughFramesToDraw();
+	}
+
+
+	// Sometimes the packet may be empty. In that case, we get another packet until
+	// we find one that has some information.
+	do
+	{
+		avresult = avcodec_send_packet(currentcodeccontext, l_state->currentpacket);
+		if (avresult < 0) {
+			gLoge("gAdvanceFramesUntilBufferFull")
+				<< "Couldn't receive packet from `avcodec_send_packet`: "
+				<< av_err2str(avresult);
+
+			l_state->lastreceivedframetype = FrameType::FRAMETYPE_NONE;
+
+			av_packet_unref(l_state->currentpacket);
+			return hasEnoughFramesToDraw();
+		}
+
+		//	Receive the decoded frame from the codec
+		avresult = avcodec_receive_frame(currentcodeccontext, currentframe);
+		if(avresult == AVERROR(EAGAIN)) {
+			av_frame_unref(currentframe);
+			return false;
+		}
+		else if(avresult == AVERROR_EOF)
+		{
+			gLoge("gAdvanceFramesUntilBufferFull")
+				<< "End of file reached for current video.";
+
+			l_state->lastreceivedframetype = FrameType::FRAMETYPE_NONE;
+
+			l_state->isfinished = true;
+
+			av_packet_unref(l_state->currentpacket);
+			av_frame_unref(currentframe);
+			return false;
+		}
+		else if (avresult < 0) { // if other error
+			gLoge("gAdvanceFramesUntilBufferFull")
+				<< "Error executing `avcodec_receive_frame`:"
+				<< av_err2str(avresult);
+
+			l_state->lastreceivedframetype = FrameType::FRAMETYPE_NONE;
+
+			av_packet_unref(l_state->currentpacket);
+			av_frame_unref(currentframe);
+			return false;
+		}
+	} while (avresult == AVERROR(EAGAIN));
+	
+
+	//	Wipe data back to default values
+	av_packet_unref(l_state->currentpacket);
+	l_state->lastreceivedframetype = successfulframetype;
+
+	if(successfulframetype == FrameType::FRAMETYPE_VIDEO)
+	{
+		gAddFrameToBuffer(l_state);
+		l_state->framesprocessed++;
+	}
+
+	if (avresult < 0)
+	{
+		gLoge("gAdvanceFramesUntilBufferFull") << "Error when reading frame: " << av_err2str(avresult);
+	}
+
+	return !g_needAllocate;
 }
 
-void gipFFmpegUtils::fetch_audio_frame(int size_1, float *buffer_1, int size_2, float *buffer_2) {
-	fetch_audio_frame_sub(size_1, buffer_1, 0);
-	if(size_2 > 0) fetch_audio_frame_sub(size_2, buffer_2, size_1);
+void gAddFrameToBuffer(std::shared_ptr<VideoState> l_state)
+{
+    uint8_t* destination[4];
+    int32_t  destinationlinesize[4];
+
+	auto data = new uint8_t[l_state->width * l_state->height * 4];
+
+	// Stuff for sws context
+    destination[0] = data;
+    destination[1] = nullptr;
+    destination[2] = nullptr;
+    destination[3] = nullptr;
+
+	// The layout of our pixel data. [RGBA, RGBA, RGBA... ]
+    destinationlinesize[0] = l_state->width * 4;
+    destinationlinesize[1] = 0;
+    destinationlinesize[2] = 0;
+    destinationlinesize[3] = 0;
+
+	auto height = sws_scale(
+		l_state->swscontext,
+		l_state->videoframe->data, l_state->videoframe->linesize,
+		0, l_state->videoframe->height,
+		destination, destinationlinesize
+	);
+
+	if(height != l_state->videoframe->height)
+	{
+		gLogd("gAddFrameToBuffer") << "Sws scaling unsucessful.";
+	}
+
+	g_framesBuffer->push(data);
+
+	destination[0] = nullptr;
+
+    av_frame_unref(l_state->videoframe);
+    av_frame_unref(l_state->audioframe);
 }
 
-bool gipFFmpegUtils::seekFrame(int64_t time_stamp_in_secs) {
+void gFetchVideoFrameToState(std::shared_ptr<VideoState> l_state) {
+	g_framesBuffer->pop(l_state->videoframepixeldata);
+}
 
-	av_seek_frame(state.formatcontext, streamslist[STREAM_VIDEO], time_stamp_in_secs, AVSEEK_FLAG_BACKWARD);
-	avcodec_flush_buffers(state.video_cdc_ctx);
+bool gSeekToFrame(std::shared_ptr<VideoState> l_state, float l_timeStampInSec) {
+	
+	auto fmtcontext = l_state->formatcontext;
+	auto videostream = l_state->formatcontext->streams[l_state->streamindices[STREAM_VIDEO]];
+	auto audiostream = l_state->formatcontext->streams[l_state->streamindices[STREAM_AUDIO]];
+	
+	int64_t timestamptimeshundred = static_cast<int64_t>(l_timeStampInSec * 100);
+
+	int64_t seekTarget = av_rescale(timestamptimeshundred, videostream->time_base.den, videostream->time_base.num) / 100;
+	
+	//int avresult = avformat_seek_file(fmtcontext, l_state->streamindices[STREAM_VIDEO], seekTarget - videostream->time_base.den, seekTarget, seekTarget, 0);
+	
+	int avresult = av_seek_frame(fmtcontext, l_state->streamindices[STREAM_VIDEO], seekTarget, 0);
+	if(avresult < 0)
+	{
+		gLoge("gSeekToFrame") << "Error when seeking to time: " << l_timeStampInSec << " " << av_err2str(avresult);
+	}
+
+	avcodec_flush_buffers(l_state->videocodeccontext);
+	if(avresult < 0)
+	{
+		gLoge("gSeekToFrame") << "Error when flushing codec context buffers " << av_err2str(avresult);
+	}
+	g_framesBuffer->popAll();
+
+	av_frame_unref(l_state->videoframe);
+	av_frame_unref(l_state->audioframe);
+	av_packet_unref(l_state->currentpacket);
+
+	l_state->framesprocessed = 0;
+	l_state->readytoplay = false;
+	g_needAllocate = true;
 
 	return true;
 }
 
-void gipFFmpegUtils::close() {
-    avformat_close_input(&state.formatcontext);
-    avformat_free_context(state.formatcontext);
-    av_frame_free(&state.video_frame);
-    av_frame_free(&state.audio_frame);
-    av_packet_free(&state.av_packet);
-    avcodec_free_context(&state.video_cdc_ctx);
-    avcodec_free_context(&state.audio_cdc_ctx);
+void gClearVideoState(std::shared_ptr<VideoState> l_state) {
+    avformat_close_input(&l_state->formatcontext);
+    avformat_free_context(l_state->formatcontext);
+    av_frame_free(&l_state->videoframe);
+    av_frame_free(&l_state->audioframe);
+    av_packet_free(&l_state->currentpacket);
+    avcodec_free_context(&l_state->videocodeccontext);
+    avcodec_free_context(&l_state->audiocodeccontext);
+	sws_freeContext(l_state->swscontext);
 }
 
-AVPixelFormat gipFFmpegUtils::correct_for_deprecated_pixel_format(AVPixelFormat pix_fmt) {
+void gClearLastFrame(std::shared_ptr<VideoState> l_state)
+{
+	l_state->videoframepixeldata.reset();
+}
+
+AVPixelFormat gGetCorrectedPixelFormat(AVPixelFormat l_pixelFormat) {
     // Fix swscaler deprecated pixel format warning
     // (YUVJ has been deprecated, change pixel format to regular YUV)
-    switch (pix_fmt) {
+    switch (l_pixelFormat) {
         case AV_PIX_FMT_YUVJ420P: return AV_PIX_FMT_YUV420P;
         case AV_PIX_FMT_YUVJ422P: return AV_PIX_FMT_YUV422P;
         case AV_PIX_FMT_YUVJ444P: return AV_PIX_FMT_YUV444P;
         case AV_PIX_FMT_YUVJ440P: return AV_PIX_FMT_YUV440P;
-        default:                  return pix_fmt;
+        default:                  return l_pixelFormat;
     }
-}
-
-bool gipFFmpegUtils::isError(int errcode) {
-    if (errcode < 0) {
-        char buf[256];
-
-        av_strerror(errcode, buf, 256);
-
-        gLoge(std::string(buf));
-
-        return true;
-    }
-
-    return false;
-}
-
-bool gipFFmpegUtils::checkNull(void *ptr, std::string errtext) {
-    if(!ptr) {
-        gLoge("checkNull") << errtext;
-        return true;
-    }
-    return false;
-}
-
-gipAVSound* gipFFmpegUtils::getAudio() {
-	return &audio;
-}
-
-gipFFmpegUtils::VideoReaderState* gipFFmpegUtils::getState() {
-	return &state;
 }

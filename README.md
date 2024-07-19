@@ -26,23 +26,35 @@ then click PATH followed by clicking Edit on the right. There, at the end of the
 
 ## Usage
 1. Add gipFFmpegVideo into plugins of your GlistApp/CMakeLists.txt
-> set(PLUGINS gipFFmpegVideo)
+```cmake
+set(PLUGINS gipFFmpegVideo)
+```
 
 2. Include gipFFmpegVideo.h in GameCanvas.h
-> #include "gipFFmpegVideo.h"
+```cpp
+#include "gipFFmpegVideo.h"
+```
 
 3. Define gipFFmpegVideo object
-> gipFFmpegVideo video;
+
+```cpp
+gipFFmpegVideo video;
+```
 
 4. Load video and set your app fps (default is 60 if you haven't changed it) in setup
-> void GameCanvas::setup() {
->     video.setAppFps(60);
->     video.loadVideo("videofilename");
-> }
+```cpp
+    void GameCanvas::setup() {
+        video.loadVideo("sintel_trailer-480p.mp4");
+        video.setPaused(false);
+        video.play();
+    }
+```
 
 5. Draw
-> void GameCanvas::draw() {
->     video.draw(x, y);
-> }
+```cpp
+void GameCanvas::draw() {
+    video.draw(x, y);
+}
+```
 ## Plugin Licence
 Apache 2
