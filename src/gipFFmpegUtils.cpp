@@ -124,13 +124,13 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 			int64_t duration = state->formatcontext->duration;
 			AVRational frame_rate = stream->avg_frame_rate;
 			if(frame_rate.den > 0 && frame_rate.num > 0) {
-				state->avgfps = frame_rate.num / frame_rate.den;
+				state->avgfps = static_cast<double>(frame_rate.num) / frame_rate.den;
 			} else {
-				state->avgfps = 25; // fallback for containers without frame rate info
+				state->avgfps = 25.0; // fallback for containers without frame rate info
 			}
 
 			// Allocate a bit more than needed.
-			g_framesbuffer = new gVideoFrameRingBuffer((SECONDS_FOR_BUFFER + 2) * state->avgfps);
+			g_framesbuffer = new gVideoFrameRingBuffer(static_cast<size_t>((SECONDS_FOR_BUFFER + 2) * state->avgfps));
 
 			continue;
 		}
@@ -210,6 +210,21 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 				<< av_err2str(averror);
 		state->iscreated = false;
 		return state;
+	}
+
+	// Detect interlaced content and correct avgfps from field rate to frame rate
+	// (e.g. MPEG-2 interlaced: avg_frame_rate reports 50 fields/s, actual is 25 frames/s)
+	{
+		auto fo = state->videocodeccontext->field_order;
+		bool interlaced = (fo == AV_FIELD_TT || fo == AV_FIELD_BB ||
+						   fo == AV_FIELD_TB || fo == AV_FIELD_BT);
+		if(!interlaced && state->videocodeccontext->ticks_per_frame == 2) {
+			interlaced = true;
+		}
+		if(interlaced && state->avgfps > 1.0) {
+			gLogd("gLoadVideoStateFromStorage") << "Interlaced content detected, correcting avgfps from " << state->avgfps << " to " << (state->avgfps / 2.0);
+			state->avgfps /= 2.0;
+		}
 	}
 
 	// Initialize the audio codec context to use the codec for the audio

@@ -76,7 +76,7 @@ struct VideoState {
     bool dimensionchanged{false};
 
     std::unique_ptr<uint8_t[]> videoframepixeldata{};
-    int64_t                    avgfps{};
+    double                     avgfps{};
 
 
     FrameType lastreceivedframetype;

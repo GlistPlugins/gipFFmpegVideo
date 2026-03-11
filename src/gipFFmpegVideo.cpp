@@ -128,53 +128,44 @@ void gipFFmpegVideo::update() {
 		framebuffer = new gTexture(videostate->width, videostate->height, GL_RGBA);
 	}
 
-	bool displayed = false;
+	// Unified display path: elapsed time triggers, audio clock corrects drift.
 
-	// Audio master clock: skip behind frames, display the closest one
+	fpsquotientcumulative += appmanager->getElapsedTime();
+
+	double nextpts = gPeekNextVideoFramePts();
+	if(nextpts < 0.0) return;
+
+	// Use avgfps for frame timing (corrected for interlaced content at load time).
+	// PTS gap can't be used because some containers report PTS at field rate.
+	double frametime = 1.0 / videostate->avgfps;
+
+	// Prevent burst after lag spike
+	if(fpsquotientcumulative > frametime * 2.0) {
+		fpsquotientcumulative = frametime * 2.0;
+	}
+
+	if(fpsquotientcumulative < frametime) return;
+	fpsquotientcumulative -= frametime;
+
+	gFetchVideoFrameToState(videostate);
+	currentframe++;
+
+	// Audio drift correction: if video fell behind audio, skip to catch up
 	if(videostate->hasaudio && audiocontext && audiocontext->initialized && audiostarted) {
 		double audioclock = gGetAudioClock(videostate);
 		if(audioclock >= 0.0) {
 			while(true) {
-				double nextpts = gPeekNextVideoFramePts();
-				if(nextpts < 0.0) break;
-				if(nextpts > audioclock) break; // frame is in the future
-
-				// Pop this frame
+				double followpts = gPeekNextVideoFramePts();
+				if(followpts < 0.0 || followpts > audioclock) break;
+				gClearLastFrame(videostate);
 				gFetchVideoFrameToState(videostate);
 				currentframe++;
-
-				// If the next frame is also at or behind audio clock, skip this one
-				double followingpts = gPeekNextVideoFramePts();
-				if(followingpts >= 0.0 && followingpts <= audioclock) {
-					gClearLastFrame(videostate);
-					continue;
-				}
-
-				// This is the latest frame at or before audio clock — display it
-				framebuffer->setData(videostate->videoframepixeldata.get(), videostate->width, videostate->height, false, false);
-				gClearLastFrame(videostate);
-				displayed = true;
-				break;
 			}
 		}
 	}
 
-	// Elapsed time fallback: when audio sync didn't display (or no audio)
-	if(!displayed) {
-		float frametime = 1.0f / static_cast<float>(videostate->avgfps);
-		fpsquotientcumulative += appmanager->getElapsedTime();
-		if(fpsquotientcumulative < frametime) {
-			return;
-		}
-		fpsquotientcumulative -= frametime;
-
-		if(gPeekNextVideoFramePts() >= 0.0) {
-			gFetchVideoFrameToState(videostate);
-			framebuffer->setData(videostate->videoframepixeldata.get(), videostate->width, videostate->height, false, false);
-			currentframe++;
-			gClearLastFrame(videostate);
-		}
-	}
+	framebuffer->setData(videostate->videoframepixeldata.get(), videostate->width, videostate->height, false, false);
+	gClearLastFrame(videostate);
 }
 
 void gipFFmpegVideo::draw() {
