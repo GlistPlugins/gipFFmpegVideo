@@ -16,9 +16,13 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/error.h>
 #include <libswscale/swscale.h>
+#include <libswresample/swresample.h>
 }
 
+class gAudioSampleRingBuffer;
+
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -54,8 +58,17 @@ struct VideoState {
     //	Audio
     AVCodecContext* audiocodeccontext{};
     AVFrame*        audioframe{};
+    SwrContext*     swrcontext{};
+    gAudioSampleRingBuffer* audiobuffer{};
+    AVRational      audiotimebase{};
     int32_t         audiochannelsnum{};
     int32_t         audiosamplerate{};
+    bool            hasaudio{false};
+
+    // PTS sync
+    std::atomic<double> audioclocksyncpts{0.0};
+    std::atomic<bool>   audioclockvalid{false};
+    double              currentvideopts{0.0};
 
     std::unique_ptr<uint8_t[]> videoframepixeldata{};
     int64_t                    avgfps{};
@@ -70,8 +83,12 @@ void gClearLastFrame(std::shared_ptr<VideoState> l_state);
 
 bool gAdvanceFramesUntilBufferFull(std::shared_ptr<VideoState> l_state);
 void gAddFrameToBuffer(std::shared_ptr<VideoState> l_state);
+void gAddAudioToBuffer(std::shared_ptr<VideoState> l_state);
 void gFetchVideoFrameToState(std::shared_ptr<VideoState> l_state);
 bool gSeekToFrame(std::shared_ptr<VideoState> l_state, float t_timeStampInSec);
+
+double gGetAudioClock(std::shared_ptr<VideoState> l_state);
+double gPeekNextVideoFramePts();
 
 void          gAllocateStorageForVideoFrame(std::shared_ptr<VideoState> l_state);
 AVPixelFormat gGetCorrectedPixelFormat(AVPixelFormat l_pixelFormat);

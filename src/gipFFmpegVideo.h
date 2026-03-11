@@ -18,6 +18,8 @@
 #include <libavutil/rational.h>
 #include <memory>
 
+struct gVideoAudioContext;
+
 class gipFFmpegVideo : public gBasePlugin {
 public:
 	gipFFmpegVideo();
@@ -66,7 +68,12 @@ private:
     float speed{};
 
     //Audio
-    float volume{};
+    float volume{1.0f};
+    gVideoAudioContext* audiocontext{};
+    bool audiostarted{false};
+
+    void initAudio();
+    void cleanupAudio();
 
     std::string filepath;
 };
