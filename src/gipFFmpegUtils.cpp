@@ -3,14 +3,13 @@
  *
  *  Created on: 10 Jul 2021
  *      Author: kayra
- *      Edited By: Umutcan T�rkmen 24 Feb 2023
+ *      Edited By: Umutcan Turkmen 24 Feb 2023
  */
 
 #include "gipFFmpegUtils.h"
 
 #include <cmath>
 #include <cstddef>
-#include <deque>
 #include <vector>
 
 extern "C" {
@@ -27,15 +26,7 @@ static constexpr int STREAM_VIDEO = 0, STREAM_AUDIO = 1, STREAM_SUBTITLE = 2;
 static constexpr int SECONDS_FOR_BUFFER{4};
 static constexpr int SECONDS_BEFORE_PLAY{1};
 
-// Has to be dynamic buffer to accomodate lower/higher fps videos.
-static gVideoFrameRingBuffer* g_framesbuffer;
-static std::deque<double> g_framepts;
-static std::deque<std::pair<int32_t, int32_t>> g_framedimensions;
-static bool g_needallocate{true};
-static int32_t g_decodewidth{0};
-static int32_t g_decodeheight{0};
-
-std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_filename) {
+std::shared_ptr<VideoState> VideoState::loadFromStorage(std::string const& t_filename) {
 	auto state = std::make_shared<VideoState>();
 
 	state->streamindices[STREAM_VIDEO] = -1;
@@ -44,7 +35,7 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 
 	state->formatcontext = avformat_alloc_context();
 	if(!state->formatcontext) {
-		gLoge("gLoadVideoStateFromStorage") << "Couldn't create create format context.";
+		gLoge("VideoState") << "Couldn't create format context.";
 		avformat_free_context(state->formatcontext);
 
 		state->iscreated = false;
@@ -53,7 +44,7 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 
 	int averror = avformat_open_input(&state->formatcontext, t_filename.c_str(), nullptr, nullptr);
 	if(averror < 0) {
-		gLoge("gLoadVideoStateFromStorage") << "Error executing `avformat_open_input`: " << av_err2str(averror);
+		gLoge("VideoState") << "Error executing `avformat_open_input`: " << av_err2str(averror);
 
 		avformat_close_input(&state->formatcontext);
 
@@ -67,7 +58,7 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 
 	averror = avformat_find_stream_info(state->formatcontext, nullptr);
 	if(averror < 0) {
-		gLoge("gLoadVideoStateFromStorage") << "Error executing `avformat_find_stream_info`: " << av_err2str(averror);
+		gLoge("VideoState") << "Error executing `avformat_find_stream_info`: " << av_err2str(averror);
 
 		avformat_close_input(&state->formatcontext);
 
@@ -87,30 +78,17 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 		auto* codec_params = stream->codecpar;
 
 		if(nullptr == codec_params) {
-			gLoge("gLoadVideoStateFromStorage") << "Stream " << i << " has null codec parameters.";
+			gLoge("VideoState") << "Stream " << i << " has null codec parameters.";
 			continue;
 		}
 
 		if(state->streamindices[STREAM_VIDEO] == -1 && codec_params->codec_type == AVMEDIA_TYPE_VIDEO) {
 			state->streamindices[STREAM_VIDEO] = i;
 
-			// if(framecount > 0)
-			// {
-			// 	state->totalframecount = framecount;
-			// }
-			// else
-			// {
-			// 	gLogd("gLoadVideoStateFromStorage") << "Meta-data \"nb_frames\" was not found in file. Estimating...";
-			// 	int64_t duration = state->formatcontext->duration;
-			// 	AVRational frame_rate = state->formatcontext->streams[i]->avg_frame_rate;
-			// 	state->totalframecount = (duration * frame_rate.num) / (AV_TIME_BASE * frame_rate.den);
-			// 	gLogd("gLoadVideoStateFromStorage") << "Estimated frame rate is: " << state->totalframecount;
-			// }
-
 			video_codec_params = codec_params;
 			video_codec = avcodec_find_decoder(codec_params->codec_id);
 
-			gLogd("gLoadVideoStateFromStorage") << "Stream " << i << ": codec_id = "
+			gLogd("VideoState") << "Stream " << i << ": codec_id = "
 												<< avcodec_get_name(codec_params->codec_id);
 
 			state->height = video_codec_params->height;
@@ -130,14 +108,14 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 			}
 
 			// Allocate a bit more than needed.
-			g_framesbuffer = new gVideoFrameRingBuffer(static_cast<size_t>((SECONDS_FOR_BUFFER + 2) * state->avgfps));
+			state->framesbuffer = new gVideoFrameRingBuffer(static_cast<size_t>((SECONDS_FOR_BUFFER + 2) * state->avgfps));
 
 			continue;
 		}
 
 		if(state->streamindices[STREAM_AUDIO] == -1 && codec_params->codec_type == AVMEDIA_TYPE_AUDIO) {
 			state->streamindices[STREAM_AUDIO] = i;
-			gLogd("gLoadVideoStateFromStorage") << "Stream " << i << ": codec_id = "
+			gLogd("VideoState") << "Stream " << i << ": codec_id = "
 												<< avcodec_get_name(codec_params->codec_id);
 			audio_codec_params = codec_params;
 			audio_codec = avcodec_find_decoder(codec_params->codec_id);
@@ -149,14 +127,14 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 	}
 
 	if(state->streamindices[STREAM_VIDEO] == -1) {
-		gLoge("gLoadVideoStateFromStorage") << "Valid VIDEO stream could not be created from the file.";
+		gLoge("VideoState") << "Valid VIDEO stream could not be created from the file.";
 
 		state->iscreated = false;
 		return state;
 	}
 
 	if(state->streamindices[STREAM_AUDIO] == -1) {
-		gLogw("gLoadVideoStateFromStorage") << "No audio stream found. Video will play without audio.";
+		gLogw("VideoState") << "No audio stream found. Video will play without audio.";
 	} else {
 		state->hasaudio = true;
 	}
@@ -164,8 +142,7 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 	// Initialize codec context for the video
 	state->videocodeccontext = avcodec_alloc_context3(video_codec);
 	if(!state->videocodeccontext) {
-		gLoge("gLoadVideoStateFromStorage")
-				<< "Could not create AVCodecContext for the found VIDEO codec :"
+		gLoge("VideoState") << "Could not create AVCodecContext for the found VIDEO codec :"
 				<< avcodec_get_name(video_codec->id);
 		state->iscreated = false;
 		return state;
@@ -175,7 +152,7 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 	if(state->hasaudio) {
 		state->audiocodeccontext = avcodec_alloc_context3(audio_codec);
 		if(!state->audiocodeccontext) {
-			gLoge("gLoadVideoStateFromStorage") << "Could not create AVCodecContext for the audio.";
+			gLoge("VideoState") << "Could not create AVCodecContext for the audio.";
 			state->hasaudio = false;
 		}
 	}
@@ -183,8 +160,7 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 	// Turn video codec parameters to codec context
 	averror = avcodec_parameters_to_context(state->videocodeccontext, video_codec_params);
 	if(averror < 0) {
-		gLoge("gLoadVideoStateFromStorage")
-				<< "Error when executing: avcodec_parameters_to_context"
+		gLoge("VideoState") << "Error when executing: avcodec_parameters_to_context"
 				<< av_err2str(averror);
 		state->iscreated = false;
 		return state;
@@ -193,7 +169,7 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 	if(state->hasaudio) {
 		averror = avcodec_parameters_to_context(state->audiocodeccontext, audio_codec_params);
 		if(averror < 0) {
-			gLoge("gLoadVideoStateFromStorage") << "Error executing `avcodec_parameters_to_context` for audio: " << av_err2str(averror);
+			gLoge("VideoState") << "Error executing `avcodec_parameters_to_context` for audio: " << av_err2str(averror);
 			state->hasaudio = false;
 		}
 	}
@@ -205,8 +181,7 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 	// Initialize the video codec context to use the codec for the video
 	averror = avcodec_open2(state->videocodeccontext, video_codec, nullptr);
 	if(averror < 0) {
-		gLoge("gLoadVideoStateFromStorage")
-				<< "Error executing `avcodec_open2`: "
+		gLoge("VideoState") << "Error executing `avcodec_open2`: "
 				<< av_err2str(averror);
 		state->iscreated = false;
 		return state;
@@ -222,7 +197,7 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 			interlaced = true;
 		}
 		if(interlaced && state->avgfps > 1.0) {
-			gLogd("gLoadVideoStateFromStorage") << "Interlaced content detected, correcting avgfps from " << state->avgfps << " to " << (state->avgfps / 2.0);
+			gLogd("VideoState") << "Interlaced content detected, correcting avgfps from " << state->avgfps << " to " << (state->avgfps / 2.0);
 			state->avgfps /= 2.0;
 		}
 	}
@@ -231,14 +206,14 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 	if(state->hasaudio) {
 		averror = avcodec_open2(state->audiocodeccontext, audio_codec, nullptr);
 		if(averror < 0) {
-			gLoge("gLoadVideoStateFromStorage") << "Error executing `avcodec_open2` for audio: " << av_err2str(averror);
+			gLoge("VideoState") << "Error executing `avcodec_open2` for audio: " << av_err2str(averror);
 			state->hasaudio = false;
 		}
 	}
 
 	state->videoframe = av_frame_alloc();
 	if(!state->videoframe) {
-		gLoge("gLoadVideoStateFromStorage") << "Could not allocate the AUDIO frame!";
+		gLoge("VideoState") << "Could not allocate the video frame!";
 		state->iscreated = false;
 		return state;
 	}
@@ -246,14 +221,14 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 	if(state->hasaudio) {
 		state->audioframe = av_frame_alloc();
 		if(!state->audioframe) {
-			gLoge("gLoadVideoStateFromStorage") << "Could not allocate the AUDIO frame!";
+			gLoge("VideoState") << "Could not allocate the audio frame!";
 			state->hasaudio = false;
 		}
 	}
 
 	state->currentpacket = av_packet_alloc();
 	if(!state->currentpacket) {
-		gLoge("gLoadVideoStateFromStorage") << "Could not allocate AVPacket!";
+		gLoge("VideoState") << "Could not allocate AVPacket!";
 		state->iscreated = false;
 		return state;
 	}
@@ -264,11 +239,11 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 			state->width, state->height, correctedpixfmt,
 			state->width, state->height, AV_PIX_FMT_RGBA,
 			SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
-	g_decodewidth = state->width;
-	g_decodeheight = state->height;
+	state->decodewidth = state->width;
+	state->decodeheight = state->height;
 
 	if(!state->swscontext) {
-		gLoge("gLoadVideoStateFromStorage") << "Couldn't initialize SwsContext";
+		gLoge("VideoState") << "Couldn't initialize SwsContext";
 		state->iscreated = false;
 		return state;
 	}
@@ -284,17 +259,17 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 					&state->audiocodeccontext->ch_layout, state->audiocodeccontext->sample_fmt, state->audiosamplerate,
 					0, nullptr);
 			if(swrerr < 0 || swr_init(state->swrcontext) < 0) {
-				gLoge("gLoadVideoStateFromStorage") << "Could not initialize SwrContext for audio resampling.";
+				gLoge("VideoState") << "Could not initialize SwrContext for audio resampling.";
 				swr_free(&state->swrcontext);
 				state->hasaudio = false;
 			} else {
 				// Buffer for ~SECONDS_FOR_BUFFER seconds of stereo float audio
 				size_t audiobufsize = SECONDS_FOR_BUFFER * state->audiosamplerate * 2 * 2;
 				state->audiobuffer = new gAudioSampleRingBuffer(audiobufsize);
-				gLogd("gLoadVideoStateFromStorage") << "Audio initialized: " << state->audiosamplerate << " Hz, " << state->audiochannelsnum << " ch -> stereo float32";
+				gLogd("VideoState") << "Audio initialized: " << state->audiosamplerate << " Hz, " << state->audiochannelsnum << " ch -> stereo float32";
 			}
 		} else {
-			gLoge("gLoadVideoStateFromStorage") << "Could not allocate SwrContext.";
+			gLoge("VideoState") << "Could not allocate SwrContext.";
 			state->hasaudio = false;
 		}
 	}
@@ -304,24 +279,24 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 	return state;
 }
 
-bool gAdvanceFramesUntilBufferFull(std::shared_ptr<VideoState> l_state) {
-	if(g_needallocate) {
-		if(l_state->preloaded) {
+bool VideoState::advanceFramesUntilBufferFull() {
+	if(needallocate) {
+		if(preloaded) {
 			// Preloaded mode: ready when all frames decoded or buffer is full
-			if(l_state->isfinished || g_framesbuffer->isFull()) {
-				g_needallocate = false;
-				l_state->readytoplay = true;
+			if(isfinished || framesbuffer->isFull()) {
+				needallocate = false;
+				readytoplay = true;
 			}
 		} else {
 			// Ready after bufferthreshold frames are buffered (or EOF)
-			if(static_cast<int>(g_framesbuffer->size()) >= l_state->bufferthreshold || l_state->isfinished) {
-				g_needallocate = false;
-				l_state->readytoplay = true;
+			if(static_cast<int>(framesbuffer->size()) >= bufferthreshold || isfinished) {
+				needallocate = false;
+				readytoplay = true;
 			}
 		}
 	}
 
-	if(g_framesbuffer->isFull() || (l_state->framecount > 0 && l_state->framesprocessed == l_state->framecount)) {
+	if(framesbuffer->isFull() || (framecount > 0 && framesprocessed == framecount)) {
 		return true;
 	}
 
@@ -329,30 +304,30 @@ bool gAdvanceFramesUntilBufferFull(std::shared_ptr<VideoState> l_state) {
 	AVFrame* currentframe{};
 	FrameType successfulframetype{};
 
-	int avresult = av_read_frame(l_state->formatcontext, l_state->currentpacket);
+	int avresult = av_read_frame(formatcontext, currentpacket);
 	if(avresult < 0) {
 		if(avresult == AVERROR_EOF) {
-			l_state->isfinished = true;
-			if(g_needallocate) {
-				g_needallocate = false;
-				l_state->readytoplay = true;
+			isfinished = true;
+			if(needallocate) {
+				needallocate = false;
+				readytoplay = true;
 			}
 		} else {
-			gLoge("gAdvanceFramesUntilBufferFull") << "Could not read frame: " << av_err2str(avresult);
+			gLoge("VideoState") << "advanceFramesUntilBufferFull: Could not read frame: " << av_err2str(avresult);
 		}
 		return true;
 	}
 
-	if(l_state->currentpacket->stream_index == l_state->streamindices[STREAM_VIDEO]) {
-		currentcodeccontext = l_state->videocodeccontext;
-		currentframe = l_state->videoframe;
+	if(currentpacket->stream_index == streamindices[STREAM_VIDEO]) {
+		currentcodeccontext = videocodeccontext;
+		currentframe = videoframe;
 		successfulframetype = FrameType::FRAMETYPE_VIDEO;
-	} else if(l_state->hasaudio && l_state->currentpacket->stream_index == l_state->streamindices[STREAM_AUDIO]) {
-		currentcodeccontext = l_state->audiocodeccontext;
-		currentframe = l_state->audioframe;
+	} else if(hasaudio && currentpacket->stream_index == streamindices[STREAM_AUDIO]) {
+		currentcodeccontext = audiocodeccontext;
+		currentframe = audioframe;
 		successfulframetype = FrameType::FRAMETYPE_AUDIO;
 	} else {
-		av_packet_unref(l_state->currentpacket);
+		av_packet_unref(currentpacket);
 		return false;// discarded packet, keep reading
 	}
 
@@ -360,15 +335,14 @@ bool gAdvanceFramesUntilBufferFull(std::shared_ptr<VideoState> l_state) {
 	// Sometimes the packet may be empty. In that case, we get another packet until
 	// we find one that has some information.
 	do {
-		avresult = avcodec_send_packet(currentcodeccontext, l_state->currentpacket);
+		avresult = avcodec_send_packet(currentcodeccontext, currentpacket);
 		if(avresult < 0) {
-			gLoge("gAdvanceFramesUntilBufferFull")
-					<< "Couldn't receive packet from `avcodec_send_packet`: "
+			gLoge("VideoState") << "advanceFramesUntilBufferFull: Couldn't receive packet from `avcodec_send_packet`: "
 					<< av_err2str(avresult);
 
-			l_state->lastreceivedframetype = FrameType::FRAMETYPE_NONE;
+			lastreceivedframetype = FrameType::FRAMETYPE_NONE;
 
-			av_packet_unref(l_state->currentpacket);
+			av_packet_unref(currentpacket);
 			return false;
 		}
 
@@ -378,20 +352,19 @@ bool gAdvanceFramesUntilBufferFull(std::shared_ptr<VideoState> l_state) {
 			av_frame_unref(currentframe);
 			return false;
 		} else if(avresult == AVERROR_EOF) {
-			l_state->lastreceivedframetype = FrameType::FRAMETYPE_NONE;
-			l_state->isfinished = true;
+			lastreceivedframetype = FrameType::FRAMETYPE_NONE;
+			isfinished = true;
 
-			av_packet_unref(l_state->currentpacket);
+			av_packet_unref(currentpacket);
 			av_frame_unref(currentframe);
 			return true;		  // end of file, stop reading
 		} else if(avresult < 0) {// if other error
-			gLoge("gAdvanceFramesUntilBufferFull")
-					<< "Error executing `avcodec_receive_frame`:"
+			gLoge("VideoState") << "advanceFramesUntilBufferFull: Error executing `avcodec_receive_frame`:"
 					<< av_err2str(avresult);
 
-			l_state->lastreceivedframetype = FrameType::FRAMETYPE_NONE;
+			lastreceivedframetype = FrameType::FRAMETYPE_NONE;
 
-			av_packet_unref(l_state->currentpacket);
+			av_packet_unref(currentpacket);
 			av_frame_unref(currentframe);
 			return false;
 		}
@@ -399,33 +372,33 @@ bool gAdvanceFramesUntilBufferFull(std::shared_ptr<VideoState> l_state) {
 
 
 	//	Wipe data back to default values
-	av_packet_unref(l_state->currentpacket);
-	l_state->lastreceivedframetype = successfulframetype;
+	av_packet_unref(currentpacket);
+	lastreceivedframetype = successfulframetype;
 
 	if(successfulframetype == FrameType::FRAMETYPE_VIDEO) {
-		gAddFrameToBuffer(l_state);
-		l_state->framesprocessed++;
+		addFrameToBuffer();
+		framesprocessed++;
 	} else if(successfulframetype == FrameType::FRAMETYPE_AUDIO) {
-		gAddAudioToBuffer(l_state);
+		addAudioToBuffer();
 	}
 
 	// Return true only when buffer is genuinely full
-	return g_framesbuffer->isFull() || (l_state->framecount > 0 && l_state->framesprocessed == l_state->framecount);
+	return framesbuffer->isFull() || (framecount > 0 && framesprocessed == framecount);
 }
 
-void gAddFrameToBuffer(std::shared_ptr<VideoState> l_state) {
+void VideoState::addFrameToBuffer() {
 	// Detect dimension change mid-stream and recreate SwsContext for this frame
-	int32_t framewidth = l_state->videoframe->width;
-	int32_t frameheight = l_state->videoframe->height;
-	if(framewidth != g_decodewidth || frameheight != g_decodeheight) {
-		gLogd("gAddFrameToBuffer") << "Dimension change: " << g_decodewidth << "x" << g_decodeheight
+	int32_t framewidth = videoframe->width;
+	int32_t frameheight = videoframe->height;
+	if(framewidth != decodewidth || frameheight != decodeheight) {
+		gLogd("VideoState") << "Dimension change: " << decodewidth << "x" << decodeheight
 								   << " -> " << framewidth << "x" << frameheight;
-		g_decodewidth = framewidth;
-		g_decodeheight = frameheight;
+		decodewidth = framewidth;
+		decodeheight = frameheight;
 
-		sws_freeContext(l_state->swscontext);
-		auto correctedpixfmt = gGetCorrectedPixelFormat(l_state->videocodeccontext->pix_fmt);
-		l_state->swscontext = sws_getContext(
+		sws_freeContext(swscontext);
+		auto correctedpixfmt = gGetCorrectedPixelFormat(videocodeccontext->pix_fmt);
+		swscontext = sws_getContext(
 				framewidth, frameheight, correctedpixfmt,
 				framewidth, frameheight, AV_PIX_FMT_RGBA,
 				SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
@@ -449,51 +422,51 @@ void gAddFrameToBuffer(std::shared_ptr<VideoState> l_state) {
 	destinationlinesize[3] = 0;
 
 	auto height = sws_scale(
-			l_state->swscontext,
-			l_state->videoframe->data, l_state->videoframe->linesize,
-			0, l_state->videoframe->height,
+			swscontext,
+			videoframe->data, videoframe->linesize,
+			0, videoframe->height,
 			destination, destinationlinesize);
 
-	if(height != l_state->videoframe->height) {
-		gLogd("gAddFrameToBuffer") << "Sws scaling unsucessful.";
+	if(height != videoframe->height) {
+		gLogd("VideoState") << "Sws scaling unsucessful.";
 	}
 
-	g_framesbuffer->push(data);
-	g_framedimensions.push_back({framewidth, frameheight});
+	framesbuffer->push(data);
+	framedimensions.push_back({framewidth, frameheight});
 
 	// Record PTS for A/V sync
 	double pts = 0.0;
-	if(l_state->videoframe->pts != AV_NOPTS_VALUE) {
-		pts = l_state->videoframe->pts * av_q2d(l_state->timebase);
+	if(videoframe->pts != AV_NOPTS_VALUE) {
+		pts = videoframe->pts * av_q2d(timebase);
 	} else {
-		pts = l_state->framesprocessed / static_cast<double>(l_state->avgfps);
+		pts = framesprocessed / static_cast<double>(avgfps);
 	}
-	g_framepts.push_back(pts);
+	framepts.push_back(pts);
 
 	destination[0] = nullptr;
 
-	av_frame_unref(l_state->videoframe);
+	av_frame_unref(videoframe);
 }
 
-void gAddAudioToBuffer(std::shared_ptr<VideoState> l_state) {
-	if(!l_state->swrcontext || !l_state->audiobuffer) {
-		av_frame_unref(l_state->audioframe);
+void VideoState::addAudioToBuffer() {
+	if(!swrcontext || !audiobuffer) {
+		av_frame_unref(audioframe);
 		return;
 	}
 
 	// Set audio clock sync point on first audio frame
-	if(!l_state->audioclockvalid.load(std::memory_order_relaxed)) {
+	if(!audioclockvalid.load(std::memory_order_relaxed)) {
 		double pts = 0.0;
-		if(l_state->audioframe->pts != AV_NOPTS_VALUE) {
-			pts = l_state->audioframe->pts * av_q2d(l_state->audiotimebase);
+		if(audioframe->pts != AV_NOPTS_VALUE) {
+			pts = audioframe->pts * av_q2d(audiotimebase);
 		}
-		l_state->audioclocksyncpts.store(pts, std::memory_order_release);
-		l_state->audioclockvalid.store(true, std::memory_order_release);
+		audioclocksyncpts.store(pts, std::memory_order_release);
+		audioclockvalid.store(true, std::memory_order_release);
 	}
 
-	int outsamples = swr_get_out_samples(l_state->swrcontext, l_state->audioframe->nb_samples);
+	int outsamples = swr_get_out_samples(swrcontext, audioframe->nb_samples);
 	if(outsamples <= 0) {
-		av_frame_unref(l_state->audioframe);
+		av_frame_unref(audioframe);
 		return;
 	}
 
@@ -502,123 +475,125 @@ void gAddAudioToBuffer(std::shared_ptr<VideoState> l_state) {
 	uint8_t* outptr = reinterpret_cast<uint8_t*>(outbuf.data());
 
 	int convertedsamples = swr_convert(
-			l_state->swrcontext,
+			swrcontext,
 			&outptr, outsamples,
-			(const uint8_t**) l_state->audioframe->data, l_state->audioframe->nb_samples);
+			(const uint8_t**) audioframe->data, audioframe->nb_samples);
 
 	if(convertedsamples > 0) {
-		l_state->audiobuffer->write(outbuf.data(), convertedsamples * channels);
+		audiobuffer->write(outbuf.data(), convertedsamples * channels);
 	}
 
-	av_frame_unref(l_state->audioframe);
+	av_frame_unref(audioframe);
 }
 
-void gFetchVideoFrameToState(std::shared_ptr<VideoState> l_state) {
-	g_framesbuffer->pop(l_state->videoframepixeldata);
-	if(!g_framepts.empty()) {
-		l_state->currentvideopts = g_framepts.front();
-		g_framepts.pop_front();
+void VideoState::fetchVideoFrame() {
+	framesbuffer->pop(videoframepixeldata);
+	if(!framepts.empty()) {
+		currentvideopts = framepts.front();
+		framepts.pop_front();
 	}
-	if(!g_framedimensions.empty()) {
-		auto [w, h] = g_framedimensions.front();
-		g_framedimensions.pop_front();
-		if(w != l_state->width || h != l_state->height) {
-			l_state->width = w;
-			l_state->height = h;
-			l_state->dimensionchanged = true;
+	if(!framedimensions.empty()) {
+		auto [w, h] = framedimensions.front();
+		framedimensions.pop_front();
+		if(w != width || h != height) {
+			width = w;
+			height = h;
+			dimensionchanged = true;
 		}
 	}
 }
 
-bool gSeekToFrame(std::shared_ptr<VideoState> l_state, float l_timeStampInSec) {
+bool VideoState::seekToFrame(float l_timeStampInSec) {
 
-	auto fmtcontext = l_state->formatcontext;
-	auto videostream = l_state->formatcontext->streams[l_state->streamindices[STREAM_VIDEO]];
+	auto fmtcontext = formatcontext;
+	auto videostream = formatcontext->streams[streamindices[STREAM_VIDEO]];
 
 	int64_t timestamptimeshundred = static_cast<int64_t>(l_timeStampInSec * 100);
 
 	int64_t seekTarget = av_rescale(timestamptimeshundred, videostream->time_base.den, videostream->time_base.num) / 100;
 
-	//int avresult = avformat_seek_file(fmtcontext, l_state->streamindices[STREAM_VIDEO], seekTarget - videostream->time_base.den, seekTarget, seekTarget, 0);
-
-	int avresult = av_seek_frame(fmtcontext, l_state->streamindices[STREAM_VIDEO], seekTarget, 0);
+	int avresult = av_seek_frame(fmtcontext, streamindices[STREAM_VIDEO], seekTarget, 0);
 	if(avresult < 0) {
-		gLoge("gSeekToFrame") << "Error when seeking to time: " << l_timeStampInSec << " " << av_err2str(avresult);
+		gLoge("VideoState") << "Error when seeking to time: " << l_timeStampInSec << " " << av_err2str(avresult);
 	}
 
-	avcodec_flush_buffers(l_state->videocodeccontext);
+	avcodec_flush_buffers(videocodeccontext);
 	if(avresult < 0) {
-		gLoge("gSeekToFrame") << "Error when flushing codec context buffers " << av_err2str(avresult);
+		gLoge("VideoState") << "Error when flushing codec context buffers " << av_err2str(avresult);
 	}
-	if(l_state->hasaudio) {
-		avcodec_flush_buffers(l_state->audiocodeccontext);
-		if(l_state->audiobuffer) {
-			l_state->audiobuffer->clear();
+	if(hasaudio) {
+		avcodec_flush_buffers(audiocodeccontext);
+		if(audiobuffer) {
+			audiobuffer->clear();
 		}
-		l_state->audioclockvalid.store(false, std::memory_order_release);
-		l_state->audioclocksyncpts.store(0.0, std::memory_order_release);
+		audioclockvalid.store(false, std::memory_order_release);
+		audioclocksyncpts.store(0.0, std::memory_order_release);
 	}
-	g_framesbuffer->popAll();
-	g_framepts.clear();
-	g_framedimensions.clear();
+	framesbuffer->popAll();
+	framepts.clear();
+	framedimensions.clear();
 
-	av_frame_unref(l_state->videoframe);
-	av_frame_unref(l_state->audioframe);
-	av_packet_unref(l_state->currentpacket);
+	av_frame_unref(videoframe);
+	av_frame_unref(audioframe);
+	av_packet_unref(currentpacket);
 
-	l_state->framesprocessed = 0;
-	l_state->readytoplay = false;
-	g_needallocate = true;
+	framesprocessed = 0;
+	readytoplay = false;
+	needallocate = true;
 
 	return true;
 }
 
-void gClearVideoState(std::shared_ptr<VideoState> l_state) {
-	avformat_close_input(&l_state->formatcontext);
-	avformat_free_context(l_state->formatcontext);
-	av_frame_free(&l_state->videoframe);
-	av_frame_free(&l_state->audioframe);
-	av_packet_free(&l_state->currentpacket);
-	avcodec_free_context(&l_state->videocodeccontext);
-	avcodec_free_context(&l_state->audiocodeccontext);
-	sws_freeContext(l_state->swscontext);
-	if(l_state->swrcontext) {
-		swr_free(&l_state->swrcontext);
+void VideoState::clear() {
+	avformat_close_input(&formatcontext);
+	avformat_free_context(formatcontext);
+	av_frame_free(&videoframe);
+	av_frame_free(&audioframe);
+	av_packet_free(&currentpacket);
+	avcodec_free_context(&videocodeccontext);
+	avcodec_free_context(&audiocodeccontext);
+	sws_freeContext(swscontext);
+	if(swrcontext) {
+		swr_free(&swrcontext);
 	}
-	delete l_state->audiobuffer;
-	l_state->audiobuffer = nullptr;
+	delete audiobuffer;
+	audiobuffer = nullptr;
+	delete framesbuffer;
+	framesbuffer = nullptr;
+	framepts.clear();
+	framedimensions.clear();
 }
 
-void gClearLastFrame(std::shared_ptr<VideoState> l_state) {
-	l_state->videoframepixeldata.reset();
+void VideoState::clearLastFrame() {
+	videoframepixeldata.reset();
 }
 
-double gGetAudioClock(std::shared_ptr<VideoState> l_state) {
-	if(!l_state->hasaudio || !l_state->audiobuffer || !l_state->audioclockvalid.load(std::memory_order_acquire)) {
+double VideoState::getAudioClock() {
+	if(!hasaudio || !audiobuffer || !audioclockvalid.load(std::memory_order_acquire)) {
 		return -1.0;
 	}
-	double syncpts = l_state->audioclocksyncpts.load(std::memory_order_acquire);
-	size_t samplesread = l_state->audiobuffer->getTotalRead();
+	double syncpts = audioclocksyncpts.load(std::memory_order_acquire);
+	size_t samplesread = audiobuffer->getTotalRead();
 	// 2 channels (stereo), so divide by 2 to get frames
-	double secondsread = static_cast<double>(samplesread) / (2.0 * l_state->audiosamplerate);
+	double secondsread = static_cast<double>(samplesread) / (2.0 * audiosamplerate);
 	return syncpts + secondsread;
 }
 
-double gPeekNextVideoFramePts() {
-	if(g_framepts.empty()) return -1.0;
-	return g_framepts.front();
+double VideoState::peekNextVideoFramePts() {
+	if(framepts.empty()) return -1.0;
+	return framepts.front();
 }
 
-void gSetVideoPreloaded(std::shared_ptr<VideoState> l_state, size_t maxmemorybytes) {
-	l_state->preloaded = true;
+void VideoState::setPreloaded(size_t maxmemorybytes) {
+	preloaded = true;
 
 	// Estimate total frames for buffer capacity
 	int64_t estimatedframes;
-	if(l_state->framecount > 0) {
-		estimatedframes = l_state->framecount;
-	} else if(l_state->formatcontext->duration > 0 && l_state->avgfps > 0) {
-		double durationsec = static_cast<double>(l_state->formatcontext->duration) / AV_TIME_BASE;
-		estimatedframes = static_cast<int64_t>(durationsec * l_state->avgfps);
+	if(framecount > 0) {
+		estimatedframes = framecount;
+	} else if(formatcontext->duration > 0 && avgfps > 0) {
+		double durationsec = static_cast<double>(formatcontext->duration) / AV_TIME_BASE;
+		estimatedframes = static_cast<int64_t>(durationsec * avgfps);
 	} else {
 		// Fallback: assume 60 seconds at 30fps
 		estimatedframes = 1800;
@@ -628,13 +603,13 @@ void gSetVideoPreloaded(std::shared_ptr<VideoState> l_state, size_t maxmemorybyt
 
 	// Cap buffer based on memory limit to prevent OOM
 	// Each decoded frame = width * height * 4 bytes (RGBA)
-	size_t framebytes = static_cast<size_t>(l_state->width) * l_state->height * 4;
+	size_t framebytes = static_cast<size_t>(width) * height * 4;
 	size_t totalmemory = static_cast<size_t>(estimatedframes) * framebytes;
 
 	if(framebytes > 0 && totalmemory > maxmemorybytes) {
 		int64_t maxframes = static_cast<int64_t>(maxmemorybytes / framebytes);
 		if(maxframes < 10) maxframes = 10;
-		gLogw("gSetVideoPreloaded") << "Full preload would require "
+		gLogw("VideoState") << "Full preload would require "
 									<< (totalmemory / (1024 * 1024))
 									<< " MB. Capping buffer to " << maxframes
 									<< " frames (~" << (maxmemorybytes / (1024 * 1024)) << " MB limit).";
@@ -642,39 +617,39 @@ void gSetVideoPreloaded(std::shared_ptr<VideoState> l_state, size_t maxmemorybyt
 	}
 
 	// Reallocate video frame buffer for entire video
-	delete g_framesbuffer;
-	g_framesbuffer = new gVideoFrameRingBuffer(estimatedframes);
-	g_framepts.clear();
-	g_framedimensions.clear();
-	g_needallocate = true;
+	delete framesbuffer;
+	framesbuffer = new gVideoFrameRingBuffer(estimatedframes);
+	framepts.clear();
+	framedimensions.clear();
+	needallocate = true;
 
 	// Reallocate audio buffer for entire video (audio is much smaller, ~10 bytes/sample vs ~8MB/frame)
-	if(l_state->hasaudio && l_state->audiobuffer) {
-		double durationsec = static_cast<double>(l_state->formatcontext->duration) / AV_TIME_BASE;
-		size_t audiosamples = static_cast<size_t>(durationsec * l_state->audiosamplerate * 2 * 1.1) + 48000;
+	if(hasaudio && audiobuffer) {
+		double durationsec = static_cast<double>(formatcontext->duration) / AV_TIME_BASE;
+		size_t audiosamples = static_cast<size_t>(durationsec * audiosamplerate * 2 * 1.1) + 48000;
 		// Cap audio buffer proportionally (use 25% of video memory limit)
 		size_t maxaudiomemory = maxmemorybytes / 4;
 		size_t audiomemory = audiosamples * sizeof(float);
 		if(audiomemory > maxaudiomemory) {
 			audiosamples = maxaudiomemory / sizeof(float);
 		}
-		delete l_state->audiobuffer;
-		l_state->audiobuffer = new gAudioSampleRingBuffer(audiosamples);
+		delete audiobuffer;
+		audiobuffer = new gAudioSampleRingBuffer(audiosamples);
 	}
 }
 
-void gSetVideoBufferDuration(std::shared_ptr<VideoState> l_state, float seconds) {
-	int frames = std::max(1, static_cast<int>(seconds * l_state->avgfps));
-	l_state->bufferthreshold = frames;
+void VideoState::setBufferDuration(float seconds) {
+	int frames = std::max(1, static_cast<int>(seconds * avgfps));
+	bufferthreshold = frames;
 
 	// Ensure buffer capacity can hold the requested duration
-	if(static_cast<int>(g_framesbuffer->capacity()) < frames) {
+	if(static_cast<int>(framesbuffer->capacity()) < frames) {
 		int newcapacity = static_cast<int>(frames * 1.1) + 10;
-		delete g_framesbuffer;
-		g_framesbuffer = new gVideoFrameRingBuffer(newcapacity);
-		g_framepts.clear();
-	g_framedimensions.clear();
-		g_needallocate = true;
+		delete framesbuffer;
+		framesbuffer = new gVideoFrameRingBuffer(newcapacity);
+		framepts.clear();
+		framedimensions.clear();
+		needallocate = true;
 	}
 }
 

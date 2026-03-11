@@ -76,7 +76,7 @@ gipFFmpegVideo::~gipFFmpegVideo() {
 
 void gipFFmpegVideo::load(std::string fullPath) {
 	filepath = fullPath;
-	videostate = gLoadVideoStateFromStorage(fullPath);
+	videostate = VideoState::loadFromStorage(fullPath);
 
 	if(!videostate->iscreated) {
 		gLoge("Could not open video file at: " + fullPath);
@@ -99,7 +99,6 @@ void gipFFmpegVideo::update() {
 		return;
 	}
 
-	// Decode packets to fill buffers (capped to avoid freezing the main loop)
 	// Decode packets with a time budget to avoid tanking the main loop
 	if(!videostate->isfinished) {
 		auto decodestart = std::chrono::steady_clock::now();
@@ -107,7 +106,7 @@ void gipFFmpegVideo::update() {
 		float budgetms = videostate->readytoplay ? 5.0f : 10.0f;
 		int maxpackets = videostate->readytoplay ? 200 : 500;
 		for(int i = 0; i < maxpackets; i++) {
-			if(gAdvanceFramesUntilBufferFull(videostate)) break;
+			if(videostate->advanceFramesUntilBufferFull()) break;
 			auto elapsed = std::chrono::steady_clock::now() - decodestart;
 			if(std::chrono::duration<float, std::milli>(elapsed).count() >= budgetms) break;
 		}
@@ -132,7 +131,7 @@ void gipFFmpegVideo::update() {
 
 	fpsquotientcumulative += appmanager->getElapsedTime();
 
-	double nextpts = gPeekNextVideoFramePts();
+	double nextpts = videostate->peekNextVideoFramePts();
 	if(nextpts < 0.0) return;
 
 	// Use avgfps for frame timing (corrected for interlaced content at load time).
@@ -147,25 +146,25 @@ void gipFFmpegVideo::update() {
 	if(fpsquotientcumulative < frametime) return;
 	fpsquotientcumulative -= frametime;
 
-	gFetchVideoFrameToState(videostate);
+	videostate->fetchVideoFrame();
 	currentframe++;
 
 	// Audio drift correction: if video fell behind audio, skip to catch up
 	if(videostate->hasaudio && audiocontext && audiocontext->initialized && audiostarted) {
-		double audioclock = gGetAudioClock(videostate);
+		double audioclock = videostate->getAudioClock();
 		if(audioclock >= 0.0) {
 			while(true) {
-				double followpts = gPeekNextVideoFramePts();
+				double followpts = videostate->peekNextVideoFramePts();
 				if(followpts < 0.0 || followpts > audioclock) break;
-				gClearLastFrame(videostate);
-				gFetchVideoFrameToState(videostate);
+				videostate->clearLastFrame();
+				videostate->fetchVideoFrame();
 				currentframe++;
 			}
 		}
 	}
 
 	framebuffer->setData(videostate->videoframepixeldata.get(), videostate->width, videostate->height, false, false);
-	gClearLastFrame(videostate);
+	videostate->clearLastFrame();
 }
 
 void gipFFmpegVideo::draw() {
@@ -192,7 +191,7 @@ void gipFFmpegVideo::play() {
 void gipFFmpegVideo::stop() {
 	close();
 
-	videostate = gLoadVideoStateFromStorage(filepath);
+	videostate = VideoState::loadFromStorage(filepath);
 	initAudio();
 
 	isplaying = false;
@@ -212,8 +211,8 @@ void gipFFmpegVideo::setPaused(bool paused) {
 
 void gipFFmpegVideo::close() {
 	cleanupAudio();
-	gClearVideoState(videostate);
-	gClearLastFrame(videostate);
+	videostate->clear();
+	videostate->clearLastFrame();
 	videostate->isfinished = true;
 	isplaying = false;
 	audiostarted = false;
@@ -225,7 +224,7 @@ void gipFFmpegVideo::setPosition(float timeInSeconds) {
 		ma_sound_stop(&audiocontext->sound);
 	}
 	audiostarted = false;
-	gSeekToFrame(videostate, timeInSeconds);
+	videostate->seekToFrame(timeInSeconds);
 	currentframe = 0;
 }
 
@@ -268,7 +267,7 @@ float gipFFmpegVideo::getVolume() {
 void gipFFmpegVideo::setPreloaded(bool preload) {
 	if(preload && videostate && videostate->iscreated) {
 		cleanupAudio();
-		gSetVideoPreloaded(videostate, maxpreloadmemory);
+		videostate->setPreloaded(maxpreloadmemory);
 		initAudio();
 	}
 }
@@ -279,7 +278,7 @@ void gipFFmpegVideo::setMaxPreloadMemory(size_t bytes) {
 
 void gipFFmpegVideo::setBufferDuration(float seconds) {
 	if(videostate && videostate->iscreated) {
-		gSetVideoBufferDuration(videostate, seconds);
+		videostate->setBufferDuration(seconds);
 	}
 }
 
@@ -288,7 +287,7 @@ bool gipFFmpegVideo::isLoading() {
 	// Initial buffering: not yet ready to play
 	if(!videostate->readytoplay) return true;
 	// Mid-playback buffering: buffer ran dry but decode isn't finished
-	if(!videostate->isfinished && gPeekNextVideoFramePts() < 0.0) return true;
+	if(!videostate->isfinished && videostate->peekNextVideoFramePts() < 0.0) return true;
 	return false;
 }
 
