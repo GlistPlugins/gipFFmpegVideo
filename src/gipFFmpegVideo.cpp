@@ -283,8 +283,13 @@ void gipFFmpegVideo::setBufferDuration(float seconds) {
 	}
 }
 
-bool gipFFmpegVideo::isLoaded() {
-	return videostate && videostate->readytoplay;
+bool gipFFmpegVideo::isLoading() {
+	if(!videostate || !videostate->iscreated) return false;
+	// Initial buffering: not yet ready to play
+	if(!videostate->readytoplay) return true;
+	// Mid-playback buffering: buffer ran dry but decode isn't finished
+	if(!videostate->isfinished && gPeekNextVideoFramePts() < 0.0) return true;
+	return false;
 }
 
 bool gipFFmpegVideo::isPlaying() {

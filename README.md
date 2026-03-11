@@ -75,8 +75,10 @@ void GameCanvas::setup() {
 }
 
 void GameCanvas::draw() {
-    // isLoaded() returns true once enough frames are buffered
-    if(video.isLoaded()) {
+    // isLoading() returns true during initial buffering or mid-playback stalls
+    if(video.isLoading()) {
+        // draw a loading indicator
+    } else {
         video.draw(0, 0);
     }
 }
