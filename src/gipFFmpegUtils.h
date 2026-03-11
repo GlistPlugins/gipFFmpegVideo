@@ -94,7 +94,7 @@ bool gSeekToFrame(std::shared_ptr<VideoState> l_state, float t_timeStampInSec);
 
 double gGetAudioClock(std::shared_ptr<VideoState> l_state);
 double gPeekNextVideoFramePts();
-void gSetVideoPreloaded(std::shared_ptr<VideoState> l_state);
+void gSetVideoPreloaded(std::shared_ptr<VideoState> l_state, size_t maxmemorybytes);
 void gSetVideoBufferDuration(std::shared_ptr<VideoState> l_state, float seconds);
 
 void          gAllocateStorageForVideoFrame(std::shared_ptr<VideoState> l_state);

@@ -123,7 +123,11 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 
 			int64_t duration = state->formatcontext->duration;
 			AVRational frame_rate = stream->avg_frame_rate;
-			state->avgfps = frame_rate.num / frame_rate.den;
+			if(frame_rate.den > 0 && frame_rate.num > 0) {
+				state->avgfps = frame_rate.num / frame_rate.den;
+			} else {
+				state->avgfps = 25; // fallback for containers without frame rate info
+			}
 
 			// Allocate a bit more than needed.
 			g_framesbuffer = new gVideoFrameRingBuffer((SECONDS_FOR_BUFFER + 2) * state->avgfps);
@@ -288,8 +292,8 @@ std::shared_ptr<VideoState> gLoadVideoStateFromStorage(std::string const& t_file
 bool gAdvanceFramesUntilBufferFull(std::shared_ptr<VideoState> l_state) {
 	if(g_needallocate) {
 		if(l_state->preloaded) {
-			// Preloaded mode: ready only when all frames are decoded
-			if(l_state->isfinished) {
+			// Preloaded mode: ready when all frames decoded or buffer is full
+			if(l_state->isfinished || g_framesbuffer->isFull()) {
 				g_needallocate = false;
 				l_state->readytoplay = true;
 			}
@@ -314,6 +318,10 @@ bool gAdvanceFramesUntilBufferFull(std::shared_ptr<VideoState> l_state) {
 	if(avresult < 0) {
 		if(avresult == AVERROR_EOF) {
 			l_state->isfinished = true;
+			if(g_needallocate) {
+				g_needallocate = false;
+				l_state->readytoplay = true;
+			}
 		} else {
 			gLoge("gAdvanceFramesUntilBufferFull") << "Could not read frame: " << av_err2str(avresult);
 		}
@@ -586,19 +594,37 @@ double gPeekNextVideoFramePts() {
 	return g_framepts.front();
 }
 
-void gSetVideoPreloaded(std::shared_ptr<VideoState> l_state) {
+void gSetVideoPreloaded(std::shared_ptr<VideoState> l_state, size_t maxmemorybytes) {
 	l_state->preloaded = true;
 
 	// Estimate total frames for buffer capacity
 	int64_t estimatedframes;
 	if(l_state->framecount > 0) {
 		estimatedframes = l_state->framecount;
-	} else {
-		// Estimate from container duration
+	} else if(l_state->formatcontext->duration > 0 && l_state->avgfps > 0) {
 		double durationsec = static_cast<double>(l_state->formatcontext->duration) / AV_TIME_BASE;
 		estimatedframes = static_cast<int64_t>(durationsec * l_state->avgfps);
+	} else {
+		// Fallback: assume 60 seconds at 30fps
+		estimatedframes = 1800;
 	}
 	estimatedframes = static_cast<int64_t>(estimatedframes * 1.1) + 10;
+	if(estimatedframes < 10) estimatedframes = 10;
+
+	// Cap buffer based on memory limit to prevent OOM
+	// Each decoded frame = width * height * 4 bytes (RGBA)
+	size_t framebytes = static_cast<size_t>(l_state->width) * l_state->height * 4;
+	size_t totalmemory = static_cast<size_t>(estimatedframes) * framebytes;
+
+	if(framebytes > 0 && totalmemory > maxmemorybytes) {
+		int64_t maxframes = static_cast<int64_t>(maxmemorybytes / framebytes);
+		if(maxframes < 10) maxframes = 10;
+		gLogw("gSetVideoPreloaded") << "Full preload would require "
+									<< (totalmemory / (1024 * 1024))
+									<< " MB. Capping buffer to " << maxframes
+									<< " frames (~" << (maxmemorybytes / (1024 * 1024)) << " MB limit).";
+		estimatedframes = maxframes;
+	}
 
 	// Reallocate video frame buffer for entire video
 	delete g_framesbuffer;
@@ -607,10 +633,16 @@ void gSetVideoPreloaded(std::shared_ptr<VideoState> l_state) {
 	g_framedimensions.clear();
 	g_needallocate = true;
 
-	// Reallocate audio buffer for entire video
+	// Reallocate audio buffer for entire video (audio is much smaller, ~10 bytes/sample vs ~8MB/frame)
 	if(l_state->hasaudio && l_state->audiobuffer) {
 		double durationsec = static_cast<double>(l_state->formatcontext->duration) / AV_TIME_BASE;
 		size_t audiosamples = static_cast<size_t>(durationsec * l_state->audiosamplerate * 2 * 1.1) + 48000;
+		// Cap audio buffer proportionally (use 25% of video memory limit)
+		size_t maxaudiomemory = maxmemorybytes / 4;
+		size_t audiomemory = audiosamples * sizeof(float);
+		if(audiomemory > maxaudiomemory) {
+			audiosamples = maxaudiomemory / sizeof(float);
+		}
 		delete l_state->audiobuffer;
 		l_state->audiobuffer = new gAudioSampleRingBuffer(audiosamples);
 	}

@@ -128,17 +128,16 @@ void gipFFmpegVideo::update() {
 		framebuffer = new gTexture(videostate->width, videostate->height, GL_RGBA);
 	}
 
-	bool synced = false;
+	bool displayed = false;
 
-	// Audio master clock: display the frame matching the current audio position
+	// Audio master clock: skip behind frames, display the closest one
 	if(videostate->hasaudio && audiocontext && audiocontext->initialized && audiostarted) {
 		double audioclock = gGetAudioClock(videostate);
 		if(audioclock >= 0.0) {
-			synced = true;
 			while(true) {
 				double nextpts = gPeekNextVideoFramePts();
 				if(nextpts < 0.0) break;
-				if(nextpts > audioclock) break; // frame is in the future, keep last displayed
+				if(nextpts > audioclock) break; // frame is in the future
 
 				// Pop this frame
 				gFetchVideoFrameToState(videostate);
@@ -154,13 +153,14 @@ void gipFFmpegVideo::update() {
 				// This is the latest frame at or before audio clock — display it
 				framebuffer->setData(videostate->videoframepixeldata.get(), videostate->width, videostate->height, false, false);
 				gClearLastFrame(videostate);
+				displayed = true;
 				break;
 			}
 		}
 	}
 
-	// No audio (or audio clock not ready): use elapsed time for frame timing
-	if(!synced) {
+	// Elapsed time fallback: when audio sync didn't display (or no audio)
+	if(!displayed) {
 		float frametime = 1.0f / static_cast<float>(videostate->avgfps);
 		fpsquotientcumulative += appmanager->getElapsedTime();
 		if(fpsquotientcumulative < frametime) {
@@ -186,7 +186,7 @@ void gipFFmpegVideo::draw(int x, int y) {
 }
 
 void gipFFmpegVideo::draw(int x, int y, int w, int h) {
-	if(videostate->isfinished || !videostate->iscreated || currentframe <= 0) {
+	if(!isplaying || !videostate->iscreated || currentframe <= 0) {
 		return;
 	}
 	framebuffer->draw(x, y, w, h);
@@ -208,10 +208,10 @@ void gipFFmpegVideo::stop() {
 	audiostarted = false;
 }
 
-void gipFFmpegVideo::setPaused(bool t_isPaused) {
-	ispaused = t_isPaused;
+void gipFFmpegVideo::setPaused(bool paused) {
+	ispaused = paused;
 	if(audiocontext && audiocontext->initialized && audiostarted) {
-		if(t_isPaused) {
+		if(paused) {
 			ma_sound_stop(&audiocontext->sound);
 		} else {
 			ma_sound_start(&audiocontext->sound);
@@ -224,16 +224,17 @@ void gipFFmpegVideo::close() {
 	gClearVideoState(videostate);
 	gClearLastFrame(videostate);
 	videostate->isfinished = true;
+	isplaying = false;
 	audiostarted = false;
 }
 
-void gipFFmpegVideo::setPosition(float t_timeInSeconds) {
+void gipFFmpegVideo::setPosition(float timeInSeconds) {
 	// Stop audio during re-buffering after seek
 	if(audiocontext && audiocontext->initialized && audiostarted) {
 		ma_sound_stop(&audiocontext->sound);
 	}
 	audiostarted = false;
-	gSeekToFrame(videostate, t_timeInSeconds);
+	gSeekToFrame(videostate, timeInSeconds);
 	currentframe = 0;
 }
 
@@ -254,12 +255,12 @@ int gipFFmpegVideo::getHeight() {
 	return videostate->height;
 }
 
-void gipFFmpegVideo::setSpeed(float t_speed) {
-	speed = t_speed;
+void gipFFmpegVideo::setSpeed(float speed) {
+	this->speed = speed;
 }
 
-void gipFFmpegVideo::setVolume(float t_volume) {
-	volume = t_volume;
+void gipFFmpegVideo::setVolume(float vol) {
+	volume = vol;
 	if(audiocontext && audiocontext->initialized) {
 		ma_sound_set_volume(&audiocontext->sound, volume);
 	}
@@ -275,8 +276,14 @@ float gipFFmpegVideo::getVolume() {
 
 void gipFFmpegVideo::setPreloaded(bool preload) {
 	if(preload && videostate && videostate->iscreated) {
-		gSetVideoPreloaded(videostate);
+		cleanupAudio();
+		gSetVideoPreloaded(videostate, maxpreloadmemory);
+		initAudio();
 	}
+}
+
+void gipFFmpegVideo::setMaxPreloadMemory(size_t bytes) {
+	maxpreloadmemory = bytes;
 }
 
 void gipFFmpegVideo::setBufferDuration(float seconds) {

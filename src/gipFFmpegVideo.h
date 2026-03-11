@@ -25,7 +25,14 @@ public:
 	gipFFmpegVideo();
     virtual ~gipFFmpegVideo();
 
+    /**
+     * Loads a video from an absolute path. Audio is auto-detected.
+     */
     void load(std::string fullPath);
+
+    /**
+     * Loads a video from the assets/videos/ directory.
+     */
     void loadVideo(std::string videoPath);
 
     void update();
@@ -34,23 +41,74 @@ public:
     void draw(int x, int y, int w, int h);
 
     void play();
-    void stop();
-    void close();
-	void setPaused(bool t_isPaused);
 
-    void setPosition(float t_timeInSeconds);
-    double getPosition(); // seconds
-	double getDuration(); // seconds
+    /**
+     * Stops playback and reloads the video from scratch, rewinding to the start.
+     */
+    void stop();
+
+    /**
+     * Releases all resources. The video cannot be played again without reloading.
+     */
+    void close();
+
+	void setPaused(bool paused);
+
+    void setPosition(float timeInSeconds);
+    double getPosition();
+	double getDuration();
     int getWidth();
     int getHeight();
 
-    void setSpeed(float t_speed);
-    void setVolume(float t_volume);
+    void setSpeed(float speed);
+
+    /**
+     * @param vol 0.0 (mute) to 1.0 (full). Values above 1.0 amplify.
+     */
+    void setVolume(float vol);
     float getSpeed();
     float getVolume();
 
+    /**
+     * Decodes all frames into memory before playback starts.
+     *
+     * Gives the smoothest playback but uses a lot of RAM (~width*height*4 bytes
+     * per frame). Memory is capped by setMaxPreloadMemory() (default 2 GB);
+     * if the video exceeds that, it gracefully falls back to a large streaming
+     * buffer.
+     *
+     * Must be called after loadVideo() and before play(). Check isLoaded() to
+     * know when preloading is complete.
+     *
+     * @code
+     * video.loadVideo("intro.mp4");
+     * video.setMaxPreloadMemory(512 * 1024 * 1024); // optional, before setPreloaded
+     * video.setPreloaded(true);
+     * video.setPaused(false);
+     * video.play();
+     * // in draw(): if(video.isLoaded()) video.draw(0, 0);
+     * @endcode
+     */
     void setPreloaded(bool preload);
+
+    /**
+     * Sets the maximum memory (in bytes) that preloaded mode may use for decoded
+     * frames. Must be called before setPreloaded(). Default is 2 GB.
+     */
+    void setMaxPreloadMemory(size_t bytes);
+
+    /**
+     * Sets how many seconds of frames to buffer before playback starts in
+     * streaming (non-preloaded) mode. Default is ~4 frames worth. Higher values
+     * add startup delay but reduce mid-playback stalls on slow I/O.
+     * Must be called after loadVideo().
+     */
     void setBufferDuration(float seconds);
+
+    /**
+     * Returns true once enough frames have been buffered to begin playback.
+     * Useful for showing a loading screen while setPreloaded(true) is working.
+     */
     bool isLoaded();
 
     bool isPlaying();
@@ -75,6 +133,8 @@ private:
     float volume{1.0f};
     gVideoAudioContext* audiocontext{};
     bool audiostarted{false};
+
+    size_t maxpreloadmemory{2ULL * 1024 * 1024 * 1024}; // 2 GB default
 
     void initAudio();
     void cleanupAudio();
