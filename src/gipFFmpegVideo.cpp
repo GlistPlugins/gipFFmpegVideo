@@ -10,6 +10,7 @@
 #include "gAudioSampleRingBuffer.h"
 #include "gSound.h"
 
+#include <chrono>
 #include <cstring>
 
 struct gVideoAudioContext {
@@ -81,8 +82,6 @@ void gipFFmpegVideo::load(std::string fullPath) {
 		gLoge("Could not open video file at: " + fullPath);
 	}
 
-	fpsquotient = static_cast<float>(videostate->avgfps) / appmanager->getTargetFramerate();
-
 	framebuffer = new gTexture(videostate->width, videostate->height, GL_RGBA);
 	initAudio();
 }
@@ -92,22 +91,26 @@ void gipFFmpegVideo::loadVideo(std::string videoPath) {
 }
 
 void gipFFmpegVideo::update() {
-	if(videostate->isfinished || ispaused || !videostate->iscreated || !isplaying) {
+	if(ispaused || !videostate->iscreated || !isplaying) {
 		return;
 	}
-	if(currentframe >= videostate->framecount) {
+	if(videostate->framecount > 0 && currentframe >= videostate->framecount) {
 		close();
 		return;
 	}
 
-	// Decode enough packets to keep buffers fed even at low app FPS.
-	// We need (video_fps + audio_frames_per_sec) / app_fps packets per update.
-	// Use a generous multiplier to handle subtitle/other discarded packets.
-	float appfps = appmanager->getFramerate();
-	if(appfps < 1.0f) appfps = 1.0f;
-	int maxpackets = std::max(8, static_cast<int>(videostate->avgfps * 5.0f / appfps));
-	for (int i = 0; i < maxpackets; i++) {
-		if(gAdvanceFramesUntilBufferFull(videostate)) break;
+	// Decode packets to fill buffers (capped to avoid freezing the main loop)
+	// Decode packets with a time budget to avoid tanking the main loop
+	if(!videostate->isfinished) {
+		auto decodestart = std::chrono::steady_clock::now();
+		// 5ms budget during playback, 10ms during pre-buffer (more aggressive)
+		float budgetms = videostate->readytoplay ? 5.0f : 10.0f;
+		int maxpackets = videostate->readytoplay ? 200 : 500;
+		for(int i = 0; i < maxpackets; i++) {
+			if(gAdvanceFramesUntilBufferFull(videostate)) break;
+			auto elapsed = std::chrono::steady_clock::now() - decodestart;
+			if(std::chrono::duration<float, std::milli>(elapsed).count() >= budgetms) break;
+		}
 	}
 
 	if(!videostate->readytoplay) return;
@@ -118,49 +121,59 @@ void gipFFmpegVideo::update() {
 		audiostarted = true;
 	}
 
-	if(videostate->hasaudio && audiocontext && audiocontext->initialized) {
-		// PTS-based sync: video follows audio clock
+	// Handle mid-stream dimension changes
+	if(videostate->dimensionchanged) {
+		videostate->dimensionchanged = false;
+		delete framebuffer;
+		framebuffer = new gTexture(videostate->width, videostate->height, GL_RGBA);
+	}
+
+	bool synced = false;
+
+	// Audio master clock: display the frame matching the current audio position
+	if(videostate->hasaudio && audiocontext && audiocontext->initialized && audiostarted) {
 		double audioclock = gGetAudioClock(videostate);
-		if(audioclock < 0.0) return;
+		if(audioclock >= 0.0) {
+			synced = true;
+			while(true) {
+				double nextpts = gPeekNextVideoFramePts();
+				if(nextpts < 0.0) break;
+				if(nextpts > audioclock) break; // frame is in the future, keep last displayed
 
-		double framethreshold = 0.5 / videostate->avgfps;
+				// Pop this frame
+				gFetchVideoFrameToState(videostate);
+				currentframe++;
 
-		// Skip frames that are behind the audio clock
-		while(true) {
-			double nextpts = gPeekNextVideoFramePts();
-			if(nextpts < 0.0) {
+				// If the next frame is also at or behind audio clock, skip this one
+				double followingpts = gPeekNextVideoFramePts();
+				if(followingpts >= 0.0 && followingpts <= audioclock) {
+					gClearLastFrame(videostate);
+					continue;
+				}
+
+				// This is the latest frame at or before audio clock — display it
+				framebuffer->setData(videostate->videoframepixeldata.get(), videostate->width, videostate->height, false, false);
+				gClearLastFrame(videostate);
 				break;
 			}
-
-			double diff = nextpts - audioclock;
-			if(diff < -framethreshold) {
-				// Video is behind - skip this frame
-				gFetchVideoFrameToState(videostate);
-				gClearLastFrame(videostate);
-				currentframe++;
-				continue;
-			}
-
-			if(diff <= framethreshold) {
-				// Close enough - display this frame
-				gFetchVideoFrameToState(videostate);
-				framebuffer->setData(videostate->videoframepixeldata.get(), videostate->width, videostate->height, false, false);
-				currentframe++;
-				gClearLastFrame(videostate);
-			}
-			// else: video is ahead of audio, wait
-			break;
 		}
-	} else {
-		// No audio - fall back to FPS quotient sync
-		if(fpsquotientcumulative >= 1.0f) {
-			fpsquotientcumulative -= 1.0f;
+	}
+
+	// No audio (or audio clock not ready): use elapsed time for frame timing
+	if(!synced) {
+		float frametime = 1.0f / static_cast<float>(videostate->avgfps);
+		fpsquotientcumulative += appmanager->getElapsedTime();
+		if(fpsquotientcumulative < frametime) {
+			return;
+		}
+		fpsquotientcumulative -= frametime;
+
+		if(gPeekNextVideoFramePts() >= 0.0) {
 			gFetchVideoFrameToState(videostate);
 			framebuffer->setData(videostate->videoframepixeldata.get(), videostate->width, videostate->height, false, false);
 			currentframe++;
 			gClearLastFrame(videostate);
 		}
-		fpsquotientcumulative += fpsquotient;
 	}
 }
 
@@ -258,6 +271,22 @@ float gipFFmpegVideo::getSpeed() {
 
 float gipFFmpegVideo::getVolume() {
 	return volume;
+}
+
+void gipFFmpegVideo::setPreloaded(bool preload) {
+	if(preload && videostate && videostate->iscreated) {
+		gSetVideoPreloaded(videostate);
+	}
+}
+
+void gipFFmpegVideo::setBufferDuration(float seconds) {
+	if(videostate && videostate->iscreated) {
+		gSetVideoBufferDuration(videostate, seconds);
+	}
+}
+
+bool gipFFmpegVideo::isLoaded() {
+	return videostate && videostate->readytoplay;
 }
 
 bool gipFFmpegVideo::isPlaying() {

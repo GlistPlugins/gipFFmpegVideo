@@ -70,6 +70,11 @@ struct VideoState {
     std::atomic<bool>   audioclockvalid{false};
     double              currentvideopts{0.0};
 
+    // Buffering
+    bool preloaded{false};
+    int bufferthreshold{4}; // frames to buffer before starting playback
+    bool dimensionchanged{false};
+
     std::unique_ptr<uint8_t[]> videoframepixeldata{};
     int64_t                    avgfps{};
 
@@ -89,6 +94,8 @@ bool gSeekToFrame(std::shared_ptr<VideoState> l_state, float t_timeStampInSec);
 
 double gGetAudioClock(std::shared_ptr<VideoState> l_state);
 double gPeekNextVideoFramePts();
+void gSetVideoPreloaded(std::shared_ptr<VideoState> l_state);
+void gSetVideoBufferDuration(std::shared_ptr<VideoState> l_state, float seconds);
 
 void          gAllocateStorageForVideoFrame(std::shared_ptr<VideoState> l_state);
 AVPixelFormat gGetCorrectedPixelFormat(AVPixelFormat l_pixelFormat);

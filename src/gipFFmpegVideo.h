@@ -49,6 +49,10 @@ public:
     float getSpeed();
     float getVolume();
 
+    void setPreloaded(bool preload);
+    void setBufferDuration(float seconds);
+    bool isLoaded();
+
     bool isPlaying();
     bool isPaused();
 
