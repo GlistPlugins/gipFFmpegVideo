@@ -8,7 +8,7 @@ Fork & clone this project into
 
 *Notice For Linux Developers* :
 Please install necessary libraries before running the plugin:
-> sudo apt-get install libavcodec58 libavcodec-dev libavformat58 libavformat-dev libavfilter7 libavfilter-dev libavdevice58 libavdevice-dev libavutil56 libavutil-dev libswscale5 libswscale-dev libao-dev libportaudio libportaudio-dev
+> sudo apt-get install libavcodec58 libavcodec-dev libavformat58 libavformat-dev libavfilter7 libavfilter-dev libavdevice58 libavdevice-dev libavutil56 libavutil-dev libswscale5 libswscale-dev libao-dev
 
 ##### *Notice for all*
 
@@ -41,20 +41,72 @@ set(PLUGINS gipFFmpegVideo)
 gipFFmpegVideo video;
 ```
 
-4. Load video and set your app fps (default is 60 if you haven't changed it) in setup
+### Basic playback (streaming)
+Frames are decoded on-the-fly during playback. Low memory usage, works for any
+file size. Audio is played automatically if the file contains an audio stream.
 ```cpp
-    void GameCanvas::setup() {
-        video.loadVideo("sintel_trailer-480p.mp4");
-        video.setPaused(false);
-        video.play();
-    }
-```
+void GameCanvas::setup() {
+    video.loadVideo("sintel_trailer-480p.mp4");
+    video.setVolume(0.8f); // optionally set the volume
+    video.setPaused(false);
+    video.play();
+}
 
-5. Draw
-```cpp
 void GameCanvas::draw() {
-    video.draw(x, y);
+    video.draw(0, 0);
 }
 ```
+
+### Preloaded playback
+All frames are decoded into memory before playback starts. Gives the smoothest
+playback but uses significant RAM (each frame = width * height * 4 bytes).
+A 1080p 24fps 1-minute clip uses ~12 GB. Memory is capped to prevent OOM
+(default 2 GB); videos exceeding the limit fall back to a large streaming buffer.
+
+`setMaxPreloadMemory()` must be called before `setPreloaded()`. Both must be
+called after `loadVideo()` and before `play()`.
+```cpp
+void GameCanvas::setup() {
+    video.loadVideo("intro.mp4");
+    video.setMaxPreloadMemory(512 * 1024 * 1024); // optional, 512 MB limit
+    video.setPreloaded(true);
+    video.setPaused(false);
+    video.play();
+}
+
+void GameCanvas::draw() {
+    // isLoading() returns true during initial buffering or mid-playback stalls
+    if(video.isLoading()) {
+        // draw a loading indicator
+    } else {
+        video.draw(0, 0);
+    }
+}
+```
+
+### Custom buffer duration (streaming)
+Controls how many seconds of frames are pre-buffered before playback begins.
+Default is ~4 frames. Higher values add startup delay but reduce stalls on
+slow I/O. Must be called after `loadVideo()`.
+```cpp
+video.loadVideo("big_video.mkv");
+video.setBufferDuration(2.0f); // buffer 2 seconds before starting
+video.setPaused(false);
+video.play();
+```
+
+### Aspect-ratio-preserving draw
+```cpp
+void GameCanvas::draw() {
+    float scale = std::min(
+        static_cast<float>(getWidth()) / video.getWidth(),
+        static_cast<float>(getHeight()) / video.getHeight()
+    );
+    int w = static_cast<int>(video.getWidth() * scale);
+    int h = static_cast<int>(video.getHeight() * scale);
+    video.draw((getWidth() - w) / 2, (getHeight() - h) / 2, w, h);
+}
+```
+
 ## Plugin Licence
 Apache 2

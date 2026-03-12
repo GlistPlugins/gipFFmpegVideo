@@ -9,66 +9,151 @@
 #ifndef GIP_FFMPEGVIDEO_H
 #define GIP_FFMPEGVIDEO_H
 
-#include "gTexture.h"
 #include "gBasePlugin.h"
 #include "gImage.h"
+#include "gTexture.h"
 #include "gipFFmpegUtils.h"
 
 #include <GLFW/glfw3.h>
 #include <libavutil/rational.h>
 #include <memory>
 
+struct gVideoAudioContext;
+
 class gipFFmpegVideo : public gBasePlugin {
 public:
 	gipFFmpegVideo();
-    virtual ~gipFFmpegVideo();
+	virtual ~gipFFmpegVideo();
 
-    void load(std::string fullPath);
-    void loadVideo(std::string videoPath);
+	/**
+     * Loads a video from an absolute path. Audio is auto-detected.
+     */
+	void load(std::string fullPath);
 
-    void update();
-    void draw();
-    void draw(int x, int y);
-    void draw(int x, int y, int w, int h);
+	/**
+     * Loads a video from the assets/videos/ directory.
+     */
+	void loadVideo(std::string videoPath);
 
-    void play();
-    void stop();
-    void close();
-	void setPaused(bool t_isPaused);
+	void update();
+	void draw();
+	void draw(int x, int y);
+	void draw(int x, int y, int w, int h);
 
-    void setPosition(float t_timeInSeconds);
-    double getPosition(); // seconds
-	double getDuration(); // seconds
-    int getWidth();
-    int getHeight();
+	void play();
 
-    void setSpeed(float t_speed);
-    void setVolume(float t_volume);
-    float getSpeed();
-    float getVolume();
+	/**
+     * Stops playback and reloads the video from scratch, rewinding to the start.
+     */
+	void stop();
 
-    bool isPlaying();
-    bool isPaused();
+	/**
+     * Releases all resources. The video cannot be played again without reloading.
+     */
+	void close();
+
+	void setPaused(bool paused);
+
+	void setPosition(float timeInSeconds);
+
+	/** Returns the current playback position in seconds. */
+	double getPosition();
+
+	/** Returns the total duration of the video in seconds. */
+	double getDuration();
+	int getWidth();
+	int getHeight();
+
+	void setSpeed(float speed);
+
+	/**
+     * @param vol 0.0 (mute) to 1.0 (full). Values above 1.0 amplify.
+     */
+	void setVolume(float vol);
+	float getSpeed();
+	float getVolume();
+
+	/**
+     * Decodes all frames into memory before playback starts.
+     *
+     * Gives the smoothest playback but uses a lot of RAM (~width*height*4 bytes
+     * per frame). Memory is capped by setMaxPreloadMemory() (default 2 GB);
+     * if the video exceeds that, it gracefully falls back to a large streaming
+     * buffer.
+     *
+     * Must be called after loadVideo() and before play(). Check isLoading() to
+     * know when preloading is still in progress.
+     *
+     * @code
+     * video.loadVideo("intro.mp4");
+     * video.setMaxPreloadMemory(512 * 1024 * 1024); // optional, before setPreloaded
+     * video.setPreloaded(true);
+     * video.setPaused(false);
+     * video.play();
+     * // in draw(): if(!video.isLoading()) video.draw(0, 0);
+     * @endcode
+     */
+	void setPreloaded(bool preload);
+
+	/**
+     * Sets the maximum memory (in bytes) that preloaded mode may use for decoded
+     * frames. Must be called before setPreloaded(). Default is 2 GB.
+     */
+	void setMaxPreloadMemory(size_t bytes);
+
+	/**
+     * Sets how many seconds of frames to buffer before playback starts in
+     * streaming (non-preloaded) mode. Default is ~4 frames worth. Higher values
+     * add startup delay but reduce mid-playback stalls on slow I/O.
+     * Must be called after loadVideo().
+     */
+	void setBufferDuration(float seconds);
+
+	/**
+     * Returns true while the video is buffering: either during initial load
+     * (before enough frames are ready to play) or during playback if the
+     * buffer runs dry (e.g. slow I/O, high bitrate). Useful for showing a
+     * loading/buffering indicator.
+     *
+     * @code
+     * if(video.isLoading()) {
+     *     drawBufferingSpinner();
+     * } else {
+     *     video.draw(0, 0);
+     * }
+     * @endcode
+     */
+	bool isLoading();
+
+	bool isPlaying();
+	bool isPaused();
 
 private:
-    gTexture* framebuffer{};
-    int currentframe{};
+	gTexture* framebuffer{};
+	int currentframe{};
 
-    std::shared_ptr<VideoState> videostate;
-    bool ispaused{false};
-    bool isplaying{false};
+	std::shared_ptr<VideoState> videostate;
+	bool ispaused{false};
+	bool isplaying{false};
 	int64_t durationInSec{};
-    int64_t positionInSec{}; // seconds
-    float fpsquotient{0.0f};
-    float fpsquotientcumulative{0.0f};
+	int64_t positionInSec{};// seconds
+	float fpsquotient{0.0f};
+	float fpsquotientcumulative{0.0f};
 
-    AVRational time_base{};
-    float speed{};
+	AVRational time_base{};
+	float speed{};
 
-    //Audio
-    float volume{};
+	//Audio
+	float volume{1.0f};
+	gVideoAudioContext* audiocontext{};
+	bool audiostarted{false};
 
-    std::string filepath;
+	size_t maxpreloadmemory{2ULL * 1024 * 1024 * 1024};// 2 GB default
+
+	void initAudio();
+	void cleanupAudio();
+
+	std::string filepath;
 };
 
 #endif /* GIP_FFMPEGVIDEO_H */

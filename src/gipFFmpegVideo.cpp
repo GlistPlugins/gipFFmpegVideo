@@ -7,24 +7,83 @@
  */
 
 #include "gipFFmpegVideo.h"
+#include "gAudioSampleRingBuffer.h"
+#include "gSound.h"
+
+#include <chrono>
+#include <cstring>
+
+struct gVideoAudioContext {
+	ma_data_source_base datasource;
+	gAudioSampleRingBuffer* buffer;
+	ma_uint32 samplerate;
+	ma_uint32 channels;
+	ma_sound sound;
+	bool initialized{false};
+};
+
+static ma_result gVideoAudio_onRead(ma_data_source* pDataSource, void* pFramesOut, ma_uint64 frameCount, ma_uint64* pFramesRead) {
+	auto* ctx = reinterpret_cast<gVideoAudioContext*>(pDataSource);
+	size_t samplesneeded = static_cast<size_t>(frameCount) * ctx->channels;
+	size_t samplesread = ctx->buffer->read(static_cast<float*>(pFramesOut), samplesneeded);
+
+	// Fill remaining with silence
+	size_t remaining = samplesneeded - samplesread;
+	if(remaining > 0) {
+		std::memset(static_cast<float*>(pFramesOut) + samplesread, 0, remaining * sizeof(float));
+	}
+
+	if(pFramesRead) *pFramesRead = frameCount;
+	return MA_SUCCESS;
+}
+
+static ma_result gVideoAudio_onSeek(ma_data_source* pDataSource, ma_uint64 frameIndex) {
+	return MA_SUCCESS;
+}
+
+static ma_result gVideoAudio_onGetDataFormat(ma_data_source* pDataSource, ma_format* pFormat, ma_uint32* pChannels, ma_uint32* pSampleRate, ma_channel* pChannelMap, size_t channelMapCap) {
+	auto* ctx = reinterpret_cast<gVideoAudioContext*>(pDataSource);
+	if(pFormat) *pFormat = ma_format_f32;
+	if(pChannels) *pChannels = ctx->channels;
+	if(pSampleRate) *pSampleRate = ctx->samplerate;
+	if(pChannelMap) ma_channel_map_init_standard(ma_standard_channel_map_default, pChannelMap, channelMapCap, ctx->channels);
+	return MA_SUCCESS;
+}
+
+static ma_result gVideoAudio_onGetCursor(ma_data_source* pDataSource, ma_uint64* pCursor) {
+	if(pCursor) *pCursor = 0;
+	return MA_SUCCESS;
+}
+
+static ma_result gVideoAudio_onGetLength(ma_data_source* pDataSource, ma_uint64* pLength) {
+	if(pLength) *pLength = 0;
+	return MA_NOT_IMPLEMENTED;
+}
+
+static ma_data_source_vtable g_videoaudiovtable = {
+		gVideoAudio_onRead,
+		gVideoAudio_onSeek,
+		gVideoAudio_onGetDataFormat,
+		gVideoAudio_onGetCursor,
+		gVideoAudio_onGetLength};
 
 gipFFmpegVideo::gipFFmpegVideo() {
 }
 
 gipFFmpegVideo::~gipFFmpegVideo() {
+	cleanupAudio();
 }
 
 void gipFFmpegVideo::load(std::string fullPath) {
 	filepath = fullPath;
-	videostate = gLoadVideoStateFromStorage(fullPath);
+	videostate = VideoState::loadFromStorage(fullPath);
 
 	if(!videostate->iscreated) {
 		gLoge("Could not open video file at: " + fullPath);
 	}
 
-	fpsquotient = static_cast<float>(videostate->avgfps) / appmanager->getTargetFramerate();
-
-    framebuffer = new gTexture(videostate->width, videostate->height, GL_RGBA);
+	framebuffer = new gTexture(videostate->width, videostate->height, GL_RGBA);
+	initAudio();
 }
 
 void gipFFmpegVideo::loadVideo(std::string videoPath) {
@@ -32,41 +91,80 @@ void gipFFmpegVideo::loadVideo(std::string videoPath) {
 }
 
 void gipFFmpegVideo::update() {
-	// When quotientnum == 1 then try to display every frame
-	if(videostate->isfinished || ispaused || !videostate->iscreated || !isplaying) {
+	if(ispaused || !videostate->iscreated || !isplaying) {
 		return;
 	}
-	if(currentframe >= videostate->framecount) {
+	if(videostate->framecount > 0 && currentframe >= videostate->framecount) {
 		close();
 		return;
 	}
 
-	// Advancing 2 times ensures we have enough frames in buffer at all times.
-	// Therefore we dont lose our video fps.
-	gAdvanceFramesUntilBufferFull(videostate);
-	gAdvanceFramesUntilBufferFull(videostate);
-
-	// When fpsquotientcumulative is atleast 1, that means its ready to show the frame on screen
-	// For example if app fps is 45, and our video is 30fps, fpsquotient is 0.66, Meaning that we
-	// will show 2 video frames per 3 engine tick on average.
-	if (videostate->readytoplay)
-	{
-		if(fpsquotientcumulative >= 1.0f) {
-			fpsquotientcumulative -= 1.0f;
-			gFetchVideoFrameToState(videostate);
-			framebuffer->setData(videostate->videoframepixeldata.get(), false, false);
-			// gLogd("gipFFmpegVideo::update")
-			// 	<< "Rendering frame: " << currentframe << "/" << videostate->framecount;
-
-			// gLogd("gipFFmpegVideo::update")
-			// 	<< "App FPS: " << appmanager->getFramerate()
-			// 	<< " Video FPS: " << videostate->avgfps
-			// 	<< " App Target FPS: " << appmanager->getTargetFramerate();
-			currentframe++;
-			gClearLastFrame(videostate);
+	// Decode packets with a time budget to avoid tanking the main loop
+	if(!videostate->isfinished) {
+		auto decodestart = std::chrono::steady_clock::now();
+		// 5ms budget during playback, 10ms during pre-buffer (more aggressive)
+		float budgetms = videostate->readytoplay ? 5.0f : 10.0f;
+		int maxpackets = videostate->readytoplay ? 200 : 500;
+		for(int i = 0; i < maxpackets; i++) {
+			if(videostate->advanceFramesUntilBufferFull()) break;
+			auto elapsed = std::chrono::steady_clock::now() - decodestart;
+			if(std::chrono::duration<float, std::milli>(elapsed).count() >= budgetms) break;
 		}
-		fpsquotientcumulative += fpsquotient;
 	}
+
+	if(!videostate->readytoplay) return;
+
+	// Start audio playback once buffers are ready (deferred from play())
+	if(!audiostarted && audiocontext && audiocontext->initialized) {
+		ma_sound_start(&audiocontext->sound);
+		audiostarted = true;
+	}
+
+	// Handle mid-stream dimension changes
+	if(videostate->dimensionchanged) {
+		videostate->dimensionchanged = false;
+		delete framebuffer;
+		framebuffer = new gTexture(videostate->width, videostate->height, GL_RGBA);
+	}
+
+	// Unified display path: elapsed time triggers, audio clock corrects drift.
+
+	fpsquotientcumulative += appmanager->getElapsedTime();
+
+	double nextpts = videostate->peekNextVideoFramePts();
+	if(nextpts < 0.0) return;
+
+	// Use avgfps for frame timing (corrected for interlaced content at load time).
+	// PTS gap can't be used because some containers report PTS at field rate.
+	double frametime = 1.0 / videostate->avgfps;
+
+	// Prevent burst after lag spike
+	if(fpsquotientcumulative > frametime * 2.0) {
+		fpsquotientcumulative = frametime * 2.0;
+	}
+
+	if(fpsquotientcumulative < frametime) return;
+	fpsquotientcumulative -= frametime;
+
+	videostate->fetchVideoFrame();
+	currentframe++;
+
+	// Audio drift correction: if video fell behind audio, skip to catch up
+	if(videostate->hasaudio && audiocontext && audiocontext->initialized && audiostarted) {
+		double audioclock = videostate->getAudioClock();
+		if(audioclock >= 0.0) {
+			while(true) {
+				double followpts = videostate->peekNextVideoFramePts();
+				if(followpts < 0.0 || followpts > audioclock) break;
+				videostate->clearLastFrame();
+				videostate->fetchVideoFrame();
+				currentframe++;
+			}
+		}
+	}
+
+	framebuffer->setData(videostate->videoframepixeldata.get(), videostate->width, videostate->height, false, false);
+	videostate->clearLastFrame();
 }
 
 void gipFFmpegVideo::draw() {
@@ -78,7 +176,7 @@ void gipFFmpegVideo::draw(int x, int y) {
 }
 
 void gipFFmpegVideo::draw(int x, int y, int w, int h) {
-	if(videostate->isfinished || !videostate->iscreated || currentframe <= 0) {
+	if(!isplaying || !videostate->iscreated || currentframe <= 0) {
 		return;
 	}
 	framebuffer->draw(x, y, w, h);
@@ -87,36 +185,52 @@ void gipFFmpegVideo::draw(int x, int y, int w, int h) {
 void gipFFmpegVideo::play() {
 	if(!videostate->iscreated) return;
 
-	//appmanager->setTargetFramerate(videostate->avgfps + 1);
-    isplaying = true;
+	isplaying = true;
 }
 
 void gipFFmpegVideo::stop() {
 	close();
 
-	videostate = gLoadVideoStateFromStorage(filepath);
+	videostate = VideoState::loadFromStorage(filepath);
+	initAudio();
 
 	isplaying = false;
+	audiostarted = false;
 }
 
-void gipFFmpegVideo::setPaused(bool t_isPaused) {
-	ispaused = t_isPaused;
+void gipFFmpegVideo::setPaused(bool paused) {
+	ispaused = paused;
+	if(audiocontext && audiocontext->initialized && audiostarted) {
+		if(paused) {
+			ma_sound_stop(&audiocontext->sound);
+		} else {
+			ma_sound_start(&audiocontext->sound);
+		}
+	}
 }
 
 void gipFFmpegVideo::close() {
-	gClearVideoState(videostate);
-	gClearLastFrame(videostate);
+	cleanupAudio();
+	videostate->clear();
+	videostate->clearLastFrame();
 	videostate->isfinished = true;
+	isplaying = false;
+	audiostarted = false;
 }
 
-void gipFFmpegVideo::setPosition(float t_timeInSeconds)
-{
-	gSeekToFrame(videostate, t_timeInSeconds);
+void gipFFmpegVideo::setPosition(float timeInSeconds) {
+	// Stop audio during re-buffering after seek
+	if(audiocontext && audiocontext->initialized && audiostarted) {
+		ma_sound_stop(&audiocontext->sound);
+	}
+	audiostarted = false;
+	videostate->seekToFrame(timeInSeconds);
+	currentframe = 0;
 }
 
-double gipFFmpegVideo::getPosition()
-{
-    return 0.0; // TODO
+double gipFFmpegVideo::getPosition() {
+	if(!videostate->iscreated) return 0.0;
+	return videostate->currentvideopts;
 }
 
 double gipFFmpegVideo::getDuration() {
@@ -131,12 +245,15 @@ int gipFFmpegVideo::getHeight() {
 	return videostate->height;
 }
 
-void gipFFmpegVideo::setSpeed(float t_speed) {
-	speed = t_speed;
+void gipFFmpegVideo::setSpeed(float speed) {
+	this->speed = speed;
 }
 
-void gipFFmpegVideo::setVolume(float t_volume) {
-	volume = t_volume;
+void gipFFmpegVideo::setVolume(float vol) {
+	volume = vol;
+	if(audiocontext && audiocontext->initialized) {
+		ma_sound_set_volume(&audiocontext->sound, volume);
+	}
 }
 
 float gipFFmpegVideo::getSpeed() {
@@ -147,10 +264,80 @@ float gipFFmpegVideo::getVolume() {
 	return volume;
 }
 
+void gipFFmpegVideo::setPreloaded(bool preload) {
+	if(preload && videostate && videostate->iscreated) {
+		cleanupAudio();
+		videostate->setPreloaded(maxpreloadmemory);
+		initAudio();
+	}
+}
+
+void gipFFmpegVideo::setMaxPreloadMemory(size_t bytes) {
+	maxpreloadmemory = bytes;
+}
+
+void gipFFmpegVideo::setBufferDuration(float seconds) {
+	if(videostate && videostate->iscreated) {
+		videostate->setBufferDuration(seconds);
+	}
+}
+
+bool gipFFmpegVideo::isLoading() {
+	if(!videostate || !videostate->iscreated) return false;
+	// Initial buffering: not yet ready to play
+	if(!videostate->readytoplay) return true;
+	// Mid-playback buffering: buffer ran dry but decode isn't finished
+	if(!videostate->isfinished && videostate->peekNextVideoFramePts() < 0.0) return true;
+	return false;
+}
+
 bool gipFFmpegVideo::isPlaying() {
 	return isplaying;
 }
 
 bool gipFFmpegVideo::isPaused() {
 	return ispaused;
+}
+
+void gipFFmpegVideo::initAudio() {
+	if(!videostate->hasaudio || !videostate->audiobuffer) return;
+
+	audiocontext = new gVideoAudioContext();
+	audiocontext->buffer = videostate->audiobuffer;
+	audiocontext->samplerate = videostate->audiosamplerate;
+	audiocontext->channels = 2;
+
+	ma_data_source_config dsconfig = ma_data_source_config_init();
+	dsconfig.vtable = &g_videoaudiovtable;
+
+	if(ma_data_source_init(&dsconfig, &audiocontext->datasource) != MA_SUCCESS) {
+		gLoge("gipFFmpegVideo") << "Failed to init audio data source";
+		delete audiocontext;
+		audiocontext = nullptr;
+		return;
+	}
+
+	if(ma_sound_init_from_data_source(gGetSoundEngine(), &audiocontext->datasource,
+									   MA_SOUND_FLAG_NO_SPATIALIZATION, nullptr, &audiocontext->sound) != MA_SUCCESS) {
+		gLoge("gipFFmpegVideo") << "Failed to init ma_sound from data source";
+		ma_data_source_uninit(&audiocontext->datasource);
+		delete audiocontext;
+		audiocontext = nullptr;
+		return;
+	}
+
+	ma_sound_set_volume(&audiocontext->sound, volume);
+	audiocontext->initialized = true;
+}
+
+void gipFFmpegVideo::cleanupAudio() {
+	if(audiocontext) {
+		if(audiocontext->initialized) {
+			ma_sound_stop(&audiocontext->sound);
+			ma_sound_uninit(&audiocontext->sound);
+			ma_data_source_uninit(&audiocontext->datasource);
+		}
+		delete audiocontext;
+		audiocontext = nullptr;
+	}
 }

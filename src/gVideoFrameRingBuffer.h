@@ -26,10 +26,10 @@ public:
     size_t size() const;
     size_t capacity() const;
 private:
-    std::vector<std::unique_ptr<uint8_t[]>> m_buffer;
-    size_t m_head{0};
-    size_t m_tail{0};
-    size_t m_count{0};
+    std::vector<std::unique_ptr<uint8_t[]>> buffer;
+    size_t head{0};
+    size_t tail{0};
+    size_t count{0};
     const size_t m_capacity;
 };
 

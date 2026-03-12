@@ -13,6 +13,7 @@ list(APPEND PLUGIN_SRCS
 			${PLUGIN_DIR}/src/gipFFmpegVideo.cpp
 			${PLUGIN_DIR}/src/gipFFmpegUtils.cpp
 			${PLUGIN_DIR}/src/gVideoFrameRingBuffer.cpp
+			${PLUGIN_DIR}/src/gAudioSampleRingBuffer.cpp
 )
 
 list(APPEND PLUGIN_INCLUDES
@@ -73,5 +74,6 @@ if(WIN32 OR LINUX)
 		avdevice
 		avutil
 		swscale
+		swresample
 	)
 endif()
